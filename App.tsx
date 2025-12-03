@@ -13,7 +13,10 @@ import {
   AlertTriangle,
   LayoutDashboard,
   Loader2,
-  WifiOff
+  WifiOff,
+  Settings,
+  X,
+  Database
 } from 'lucide-react';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
 import { FormInput } from './components/FormInput';
@@ -21,7 +24,7 @@ import { FormSelect } from './components/FormSelect';
 import { FormTextArea } from './components/FormTextArea';
 import { RadioGroup } from './components/RadioGroup';
 import { getFormattedDateTime, formatDisplayDate } from './utils';
-import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { supabase, isSupabaseConfigured, saveSupabaseConfig, clearSupabaseConfig } from './supabaseClient';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'geral' | 'escala' | 'chamadoEscalado' | 'dashboard'>('geral');
@@ -34,6 +37,11 @@ const App: React.FC = () => {
   const [summary, setSummary] = useState('');
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Settings Modal State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [configUrl, setConfigUrl] = useState('');
+  const [configKey, setConfigKey] = useState('');
 
   // Toggle SIC options
   const toggleSicOption = (option: SicOption) => {
@@ -269,11 +277,81 @@ const App: React.FC = () => {
     }
   };
 
+  const handleSaveConfig = () => {
+    if (!configUrl || !configKey) {
+      alert("Preencha ambos os campos.");
+      return;
+    }
+    saveSupabaseConfig(configUrl, configKey);
+  };
+
   // Filter history for dashboard
   const dashboardData = history.filter(item => item.recordType === 'ESCALATION');
 
   return (
-    <div className="min-h-screen pb-12 bg-gray-50">
+    <div className="min-h-screen pb-12 bg-gray-50 relative">
+      
+      {/* Config Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="bg-gray-800 text-white px-6 py-4 flex justify-between items-center">
+              <h3 className="font-semibold flex items-center gap-2">
+                <Database className="w-5 h-5" />
+                Configurar Banco de Dados
+              </h3>
+              <button onClick={() => setIsSettingsOpen(false)} className="text-gray-400 hover:text-white transition">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 mb-4">
+                Insira as credenciais do seu projeto Supabase para ativar o modo online.
+              </p>
+              
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-700 uppercase">Project URL</label>
+                <input 
+                  type="text" 
+                  value={configUrl}
+                  onChange={(e) => setConfigUrl(e.target.value)}
+                  placeholder="https://seu-projeto.supabase.co"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-700 uppercase">API Key (Anon/Public)</label>
+                <input 
+                  type="password" 
+                  value={configKey}
+                  onChange={(e) => setConfigKey(e.target.value)}
+                  placeholder="eyJh..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                {isSupabaseConfigured && (
+                  <button 
+                    onClick={clearSupabaseConfig}
+                    className="flex-1 py-2 px-4 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium"
+                  >
+                    Desconectar
+                  </button>
+                )}
+                <button 
+                  onClick={handleSaveConfig}
+                  className="flex-1 py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md text-sm font-medium"
+                >
+                  Salvar e Conectar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -287,14 +365,33 @@ const App: React.FC = () => {
           </div>
           <div className="flex items-center space-x-2 text-sm text-gray-500">
              {isLoading && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
-             {!isSupabaseConfigured && (
-                <div className="flex items-center text-orange-500 bg-orange-50 px-2 py-1 rounded border border-orange-200" title="Banco de dados não configurado">
-                  <WifiOff className="w-4 h-4 mr-1" />
-                  <span className="text-xs font-semibold">Offline</span>
+             {!isSupabaseConfigured ? (
+                <div 
+                  className="flex items-center text-orange-500 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-200 cursor-pointer hover:bg-orange-100 transition"
+                  onClick={() => setIsSettingsOpen(true)}
+                  title="Clique para configurar"
+                >
+                  <WifiOff className="w-4 h-4 mr-1.5" />
+                  <span className="text-xs font-bold">Offline</span>
+                </div>
+             ) : (
+                <div 
+                  className="flex items-center text-green-600 bg-green-50 px-3 py-1.5 rounded-full border border-green-200 cursor-pointer hover:bg-green-100 transition"
+                  onClick={() => setIsSettingsOpen(true)}
+                  title="Conectado ao Banco de Dados"
+                >
+                  <Database className="w-4 h-4 mr-1.5" />
+                  <span className="text-xs font-bold">Online</span>
                 </div>
              )}
-             <MonitorSmartphone className="w-5 h-5 ml-2" />
-             <span className="hidden sm:inline">Registro de Hardware</span>
+             
+             <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors"
+              title="Configurações"
+             >
+               <Settings className="w-5 h-5" />
+             </button>
           </div>
         </div>
       </header>
@@ -693,7 +790,7 @@ const App: React.FC = () => {
             <div className="flex items-center space-x-2 mb-4">
               <History className="w-5 h-5 text-gray-500" />
               <h2 className="text-lg font-bold text-gray-800">Histórico de Atendimentos</h2>
-              {!isSupabaseConfigured && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded">Local Session Only</span>}
+              {!isSupabaseConfigured && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded">Sessão Local</span>}
             </div>
             <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
