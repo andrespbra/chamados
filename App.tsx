@@ -12,7 +12,8 @@ import {
   ClipboardCheck,
   AlertTriangle,
   LayoutDashboard,
-  Loader2
+  Loader2,
+  WifiOff
 } from 'lucide-react';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
 import { FormInput } from './components/FormInput';
@@ -20,7 +21,7 @@ import { FormSelect } from './components/FormSelect';
 import { FormTextArea } from './components/FormTextArea';
 import { RadioGroup } from './components/RadioGroup';
 import { getFormattedDateTime, formatDisplayDate } from './utils';
-import { supabase } from './supabaseClient';
+import { supabase, isSupabaseConfigured } from './supabaseClient';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'geral' | 'escala' | 'chamadoEscalado' | 'dashboard'>('geral');
@@ -48,6 +49,8 @@ const App: React.FC = () => {
 
   // Carregar dados do Supabase ao iniciar
   const fetchRecords = useCallback(async () => {
+    if (!isSupabaseConfigured) return; // Não tenta buscar se não houver credenciais
+
     setIsLoading(true);
     try {
       const { data, error } = await supabase
@@ -58,15 +61,10 @@ const App: React.FC = () => {
       if (error) throw error;
       
       if (data) {
-        // Mapear campos do banco (snake_case) para camelCase se necessário, 
-        // mas aqui vamos assumir que o Supabase retornará JSON compatível ou ajustaremos na query.
-        // Para simplificar, assumimos que as colunas do banco têm os mesmos nomes das chaves do objeto JSON
-        // ou usamos "as" na query, mas a melhor prática é salvar como JSONB ou colunas diretas.
-        // Abaixo, assumimos que as colunas foram criadas com camelCase no Supabase (usando aspas duplas na criação)
         setHistory(data as unknown as SupportRecord[]);
       }
-    } catch (error) {
-      console.error('Erro ao buscar registros:', error);
+    } catch (error: any) {
+      console.error('Erro ao buscar registros:', error.message || error);
     } finally {
       setIsLoading(false);
     }
@@ -188,41 +186,49 @@ const App: React.FC = () => {
       ...formData,
       recordType,
       endTime: formData.endTime || getFormattedDateTime(),
-      status: 'Aberto',
-      escalationValidation: 'Não' 
+      status: 'Aberto' as const,
+      escalationValidation: 'Não' as const
     };
 
     try {
-      // Inserir no Supabase
-      const { data, error } = await supabase
-        .from('support_records')
-        .insert([newRecordPayload])
-        .select();
+      let savedRecord: SupportRecord;
 
-      if (error) throw error;
+      if (isSupabaseConfigured) {
+        // Inserir no Supabase (Online)
+        const { data, error } = await supabase
+          .from('support_records')
+          .insert([newRecordPayload])
+          .select();
 
-      if (data) {
-         // Atualiza histórico localmente para feedback instantâneo (ou rechama fetchRecords)
-         const savedRecord = data[0] as unknown as SupportRecord;
-         setHistory([savedRecord, ...history]);
-         
-         // Copiar resumo
-         navigator.clipboard.writeText(generateSummary());
-         
-         // Reset fields
-         setFormData({
-            ...INITIAL_STATE,
-            analystName: formData.analystName,
-            startTime: getFormattedDateTime(),
-            escalationDate: getFormattedDateTime()
-         });
-
-         setCopied(true);
-         setTimeout(() => setCopied(false), 3000);
+        if (error) throw error;
+        
+        savedRecord = data ? (data[0] as unknown as SupportRecord) : { id: 'temp-' + Date.now(), ...newRecordPayload };
+      } else {
+        // Modo Offline
+        savedRecord = { id: 'local-' + Date.now(), ...newRecordPayload };
+        console.warn("Salvando localmente (Offline Mode)");
       }
-    } catch (err) {
+
+      // Atualiza histórico localmente
+      setHistory([savedRecord, ...history]);
+      
+      // Copiar resumo
+      navigator.clipboard.writeText(generateSummary());
+      
+      // Reset fields
+      setFormData({
+        ...INITIAL_STATE,
+        analystName: formData.analystName,
+        startTime: getFormattedDateTime(),
+        escalationDate: getFormattedDateTime()
+      });
+
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+
+    } catch (err: any) {
       console.error("Erro ao salvar:", err);
-      alert("Erro ao salvar o registro no banco de dados.");
+      alert(`Erro ao salvar: ${err.message || 'Verifique o console'}`);
     } finally {
       setIsLoading(false);
     }
@@ -243,6 +249,8 @@ const App: React.FC = () => {
   };
 
   const updateRecord = async (id: string, field: keyof SupportRecord, value: any) => {
+    if (!isSupabaseConfigured) return;
+
     // Otimistic Update
     const originalHistory = [...history];
     setHistory(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
@@ -279,7 +287,13 @@ const App: React.FC = () => {
           </div>
           <div className="flex items-center space-x-2 text-sm text-gray-500">
              {isLoading && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
-             <MonitorSmartphone className="w-5 h-5" />
+             {!isSupabaseConfigured && (
+                <div className="flex items-center text-orange-500 bg-orange-50 px-2 py-1 rounded border border-orange-200" title="Banco de dados não configurado">
+                  <WifiOff className="w-4 h-4 mr-1" />
+                  <span className="text-xs font-semibold">Offline</span>
+                </div>
+             )}
+             <MonitorSmartphone className="w-5 h-5 ml-2" />
              <span className="hidden sm:inline">Registro de Hardware</span>
           </div>
         </div>
@@ -360,6 +374,7 @@ const App: React.FC = () => {
                        <>
                         <AlertTriangle className="w-12 h-12 mx-auto text-gray-300 mb-4" />
                         <p>Nenhum chamado escalado registrado ainda.</p>
+                        {!isSupabaseConfigured && <p className="text-xs text-orange-500 mt-2">(Modo Offline Ativo - Banco de dados indisponível)</p>}
                        </>
                      )}
                   </div>
@@ -399,11 +414,12 @@ const App: React.FC = () => {
                               <select 
                                 value={record.status}
                                 onChange={(e) => updateRecord(record.id, 'status', e.target.value)}
+                                disabled={!isSupabaseConfigured}
                                 className={`text-xs font-bold px-2 py-1 rounded-full border-0 cursor-pointer focus:ring-2 focus:ring-offset-1 ${
                                   record.status === 'Aberto' 
                                     ? 'bg-green-100 text-green-800' 
                                     : 'bg-gray-100 text-gray-600'
-                                }`}
+                                } ${!isSupabaseConfigured ? 'opacity-50 cursor-not-allowed' : ''}`}
                               >
                                 <option value="Aberto">Aberto</option>
                                 <option value="Fechado">Fechado</option>
@@ -413,11 +429,12 @@ const App: React.FC = () => {
                               <select 
                                 value={record.escalationValidation}
                                 onChange={(e) => updateRecord(record.id, 'escalationValidation', e.target.value)}
+                                disabled={!isSupabaseConfigured}
                                 className={`text-xs font-bold px-2 py-1 rounded-full border-0 cursor-pointer focus:ring-2 focus:ring-offset-1 ${
                                   record.escalationValidation === 'Sim' 
                                     ? 'bg-blue-100 text-blue-800' 
                                     : 'bg-red-100 text-red-800'
-                                }`}
+                                } ${!isSupabaseConfigured ? 'opacity-50 cursor-not-allowed' : ''}`}
                               >
                                 <option value="Sim">Sim</option>
                                 <option value="Não">Não</option>
@@ -659,7 +676,9 @@ const App: React.FC = () => {
                     <span>{isLoading ? 'Salvando...' : 'Registrar Atendimento'}</span>
                   </button>
                   <p className="text-xs text-center text-gray-400 mt-2">
-                    * Salva no banco de dados e copia para a área de transferência.
+                    {isSupabaseConfigured 
+                      ? "* Salva no banco de dados e copia para a área de transferência." 
+                      : "* Apenas copia para a área de transferência (Offline)."}
                   </p>
                 </div>
               </div>
@@ -674,6 +693,7 @@ const App: React.FC = () => {
             <div className="flex items-center space-x-2 mb-4">
               <History className="w-5 h-5 text-gray-500" />
               <h2 className="text-lg font-bold text-gray-800">Histórico de Atendimentos</h2>
+              {!isSupabaseConfigured && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded">Local Session Only</span>}
             </div>
             <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
