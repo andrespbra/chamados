@@ -1,0 +1,730 @@
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { 
+  ClipboardCopy, 
+  Trash2, 
+  Save, 
+  CheckCircle2, 
+  History, 
+  MonitorSmartphone,
+  ServerCrash,
+  FileText,
+  ClipboardCheck,
+  AlertTriangle,
+  LayoutDashboard,
+  Loader2
+} from 'lucide-react';
+import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
+import { FormInput } from './components/FormInput';
+import { FormSelect } from './components/FormSelect';
+import { FormTextArea } from './components/FormTextArea';
+import { RadioGroup } from './components/RadioGroup';
+import { getFormattedDateTime, formatDisplayDate } from './utils';
+import { supabase } from './supabaseClient';
+
+const App: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'geral' | 'escala' | 'chamadoEscalado' | 'dashboard'>('geral');
+  const [formData, setFormData] = useState<Omit<SupportRecord, 'id'>>({
+    ...INITIAL_STATE,
+    startTime: getFormattedDateTime(),
+    escalationDate: getFormattedDateTime()
+  });
+  const [history, setHistory] = useState<SupportRecord[]>([]);
+  const [summary, setSummary] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Toggle SIC options
+  const toggleSicOption = (option: SicOption) => {
+    setFormData(prev => {
+      const current = prev.sicOptions;
+      if (current.includes(option)) {
+        return { ...prev, sicOptions: current.filter(o => o !== option) };
+      } else {
+        return { ...prev, sicOptions: [...current, option] };
+      }
+    });
+  };
+
+  // Carregar dados do Supabase ao iniciar
+  const fetchRecords = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('support_records')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      
+      if (data) {
+        // Mapear campos do banco (snake_case) para camelCase se necessário, 
+        // mas aqui vamos assumir que o Supabase retornará JSON compatível ou ajustaremos na query.
+        // Para simplificar, assumimos que as colunas do banco têm os mesmos nomes das chaves do objeto JSON
+        // ou usamos "as" na query, mas a melhor prática é salvar como JSONB ou colunas diretas.
+        // Abaixo, assumimos que as colunas foram criadas com camelCase no Supabase (usando aspas duplas na criação)
+        setHistory(data as unknown as SupportRecord[]);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar registros:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchRecords();
+  }, [fetchRecords]);
+
+  // Generate Summary Text
+  const generateSummary = useCallback(() => {
+    const lines: string[] = [];
+
+    // 1. SUMMARY FOR 'ESCALA' TAB (Validation)
+    if (activeTab === 'escala') {
+      let headerTag = '';
+      if (formData.isValidated === 'Sim') headerTag = '#VLDD#';
+      if (formData.isValidated === 'Não') headerTag = '#NVLDD#';
+
+      lines.push(`${headerTag} === ESCALADA / VALIDAÇÃO ===`.trim());
+      lines.push(`Analista: ${formData.analystName}`);
+      lines.push(`Local: ${formData.locationName}`);
+      lines.push(`Task: ${formData.task}`);
+      lines.push(`----------------------------------------`);
+      lines.push(`Defeito Reclamado (Cliente):`);
+      lines.push(`${formData.customerComplaint}`);
+      lines.push(`----------------------------------------`);
+      lines.push(`>>> CHECKLIST <<<`);
+      lines.push(`Validado? ${formData.isValidated}`);
+      lines.push(`Plano de Ação Efetivo? ${formData.isActionPlanEffective}`);
+      
+      let partChangedText = `Peça Trocada? ${formData.wasPartChanged}`;
+      if (formData.wasPartChanged === 'Sim') {
+        partChangedText += ` (${formData.partChangedDescription})`;
+      }
+      lines.push(partChangedText);
+      
+      lines.push(`Diag Completo? ${formData.usedDiagValidation}`);
+      lines.push(`Cartão Teste? ${formData.usedTestCard}`);
+      lines.push(`SIC Verificado: ${formData.sicOptions.length > 0 ? formData.sicOptions.join(', ') : 'Nenhum'}`);
+      lines.push(`Acompanhamento: ${formData.customerName} ${formData.customerBadge ? `(Mat: ${formData.customerBadge})` : ''}`);
+      
+      lines.push(`----------------------------------------`);
+      lines.push(`Início: ${formatDisplayDate(formData.startTime)}`);
+      lines.push(`Fim: ${formatDisplayDate(formData.endTime)}`);
+    } 
+    
+    // 2. SUMMARY FOR 'CHAMADO ESCALADO' TAB
+    else if (activeTab === 'chamadoEscalado') {
+      lines.push(`=== CHAMADO / ESCALADO ===`);
+      lines.push(`Data da Escalada: ${formatDisplayDate(formData.escalationDate)}`);
+      lines.push(`Local: ${formData.locationName}`);
+      lines.push(`Task / Chamado: ${formData.task}`);
+      lines.push(`Técnico: ${formData.technicianName}`);
+      lines.push(`----------------------------------------`);
+      lines.push(`Defeito Reclamado (Cliente):`);
+      lines.push(`${formData.customerComplaint}`);
+      lines.push(`----------------------------------------`);
+      lines.push(`Analista Responsável: ${formData.analystName}`);
+    }
+
+    // 3. SUMMARY FOR 'GERAL' TAB
+    else if (activeTab === 'geral') {
+      lines.push(`=== REGISTRO DE ATENDIMENTO HW ===`);
+      lines.push(`Analista: ${formData.analystName}`);
+      lines.push(`Local: ${formData.locationName}`);
+      lines.push(`Task: ${formData.task}`);
+      lines.push(`SR: ${formData.sr}`);
+      lines.push(`Assunto: ${formData.subject}`);
+      lines.push(`Chamado Escalado: ${formData.isEscalated}`);
+      if (formData.isEscalated === 'Sim') {
+        lines.push(`Analista do Banco: ${formData.bankAnalystName}`);
+      }
+      lines.push(`----------------------------------------`);
+      lines.push(`Problema Relatado (Técnico):`);
+      lines.push(`${formData.problemDescription}`);
+      lines.push(`----------------------------------------`);
+      lines.push(`Ação do Analista:`);
+      lines.push(`${formData.actionTaken}`);
+      lines.push(`----------------------------------------`);
+      lines.push(`Início Suporte: ${formatDisplayDate(formData.startTime)}`);
+      lines.push(`Fim Suporte: ${formatDisplayDate(formData.endTime)}`);
+      lines.push(`Ligação Devida: ${formData.validCall}`);
+      lines.push(`Houve Ensinamento: ${formData.trainingProvided}`);
+      lines.push(`Utilizou ACFS: ${formData.usedAcfs}`);
+    }
+
+    return lines.filter(l => l !== '').join('\n');
+  }, [formData, activeTab]);
+
+  useEffect(() => {
+    setSummary(generateSummary());
+  }, [generateSummary]);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(summary);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!formData.analystName) {
+      alert("Por favor, preencha o Nome do Analista.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    // Determine Record Type based on active tab
+    let recordType: 'GENERAL' | 'VALIDATION' | 'ESCALATION' = 'GENERAL';
+    if (activeTab === 'escala') recordType = 'VALIDATION';
+    if (activeTab === 'chamadoEscalado') recordType = 'ESCALATION';
+
+    const newRecordPayload = {
+      ...formData,
+      recordType,
+      endTime: formData.endTime || getFormattedDateTime(),
+      status: 'Aberto',
+      escalationValidation: 'Não' 
+    };
+
+    try {
+      // Inserir no Supabase
+      const { data, error } = await supabase
+        .from('support_records')
+        .insert([newRecordPayload])
+        .select();
+
+      if (error) throw error;
+
+      if (data) {
+         // Atualiza histórico localmente para feedback instantâneo (ou rechama fetchRecords)
+         const savedRecord = data[0] as unknown as SupportRecord;
+         setHistory([savedRecord, ...history]);
+         
+         // Copiar resumo
+         navigator.clipboard.writeText(generateSummary());
+         
+         // Reset fields
+         setFormData({
+            ...INITIAL_STATE,
+            analystName: formData.analystName,
+            startTime: getFormattedDateTime(),
+            escalationDate: getFormattedDateTime()
+         });
+
+         setCopied(true);
+         setTimeout(() => setCopied(false), 3000);
+      }
+    } catch (err) {
+      console.error("Erro ao salvar:", err);
+      alert("Erro ao salvar o registro no banco de dados.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClear = () => {
+    if (window.confirm("Tem certeza que deseja limpar todos os campos?")) {
+      setFormData({
+        ...INITIAL_STATE,
+        startTime: getFormattedDateTime(),
+        escalationDate: getFormattedDateTime()
+      });
+    }
+  };
+
+  const setEndNow = () => {
+    setFormData(prev => ({ ...prev, endTime: getFormattedDateTime() }));
+  };
+
+  const updateRecord = async (id: string, field: keyof SupportRecord, value: any) => {
+    // Otimistic Update
+    const originalHistory = [...history];
+    setHistory(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+
+    try {
+      const { error } = await supabase
+        .from('support_records')
+        .update({ [field]: value })
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (err) {
+      console.error("Erro ao atualizar:", err);
+      alert("Erro ao atualizar o registro.");
+      setHistory(originalHistory); // Reverte em caso de erro
+    }
+  };
+
+  // Filter history for dashboard
+  const dashboardData = history.filter(item => item.recordType === 'ESCALATION');
+
+  return (
+    <div className="min-h-screen pb-12 bg-gray-50">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="bg-blue-600 p-2 rounded-lg">
+              <ServerCrash className="w-6 h-6 text-white" />
+            </div>
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight">
+              Support<span className="text-blue-600">Log</span> URA
+            </h1>
+          </div>
+          <div className="flex items-center space-x-2 text-sm text-gray-500">
+             {isLoading && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
+             <MonitorSmartphone className="w-5 h-5" />
+             <span className="hidden sm:inline">Registro de Hardware</span>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        {/* Navigation Tabs */}
+        <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-1 bg-gray-200 p-1 rounded-lg mb-8">
+          <button
+            onClick={() => setActiveTab('geral')}
+            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 text-sm font-medium rounded-md transition-all ${
+              activeTab === 'geral' 
+                ? 'bg-white text-blue-600 shadow-sm' 
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Atendimento Geral</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('escala')}
+            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 text-sm font-medium rounded-md transition-all ${
+              activeTab === 'escala' 
+                ? 'bg-white text-purple-600 shadow-sm' 
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            <span>ESCALADA / Validação</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('chamadoEscalado')}
+            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 text-sm font-medium rounded-md transition-all ${
+              activeTab === 'chamadoEscalado' 
+                ? 'bg-white text-orange-600 shadow-sm' 
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <AlertTriangle className="w-4 h-4" />
+            <span>Chamado / Escalado</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('dashboard')}
+            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 text-sm font-medium rounded-md transition-all ${
+              activeTab === 'dashboard' 
+                ? 'bg-white text-indigo-600 shadow-sm' 
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            <span>Dashboard</span>
+          </button>
+        </div>
+
+        {activeTab === 'dashboard' ? (
+          /* DASHBOARD VIEW */
+          <div className="animate-in fade-in duration-300">
+             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="px-6 py-5 border-b border-gray-200 bg-indigo-50/50 flex justify-between items-center">
+                   <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                     <LayoutDashboard className="w-5 h-5 text-indigo-600" />
+                     Dashboard de Escaladas
+                   </h2>
+                   <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
+                     Total: {dashboardData.length}
+                   </span>
+                </div>
+                
+                {dashboardData.length === 0 ? (
+                  <div className="p-12 text-center text-gray-500">
+                     {isLoading ? (
+                        <div className="flex flex-col items-center">
+                          <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-2" />
+                          <p>Carregando dados...</p>
+                        </div>
+                     ) : (
+                       <>
+                        <AlertTriangle className="w-12 h-12 mx-auto text-gray-300 mb-4" />
+                        <p>Nenhum chamado escalado registrado ainda.</p>
+                       </>
+                     )}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data Escalada</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Analista</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Técnico</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Local</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task / Chamado</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Validação</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {dashboardData.map((record) => (
+                          <tr key={record.id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                              {formatDisplayDate(record.escalationDate)}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                              {record.analystName}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                              {record.technicianName || '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                              {record.locationName}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                              <span className="font-mono bg-gray-100 px-2 py-1 rounded">{record.task}</span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <select 
+                                value={record.status}
+                                onChange={(e) => updateRecord(record.id, 'status', e.target.value)}
+                                className={`text-xs font-bold px-2 py-1 rounded-full border-0 cursor-pointer focus:ring-2 focus:ring-offset-1 ${
+                                  record.status === 'Aberto' 
+                                    ? 'bg-green-100 text-green-800' 
+                                    : 'bg-gray-100 text-gray-600'
+                                }`}
+                              >
+                                <option value="Aberto">Aberto</option>
+                                <option value="Fechado">Fechado</option>
+                              </select>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <select 
+                                value={record.escalationValidation}
+                                onChange={(e) => updateRecord(record.id, 'escalationValidation', e.target.value)}
+                                className={`text-xs font-bold px-2 py-1 rounded-full border-0 cursor-pointer focus:ring-2 focus:ring-offset-1 ${
+                                  record.escalationValidation === 'Sim' 
+                                    ? 'bg-blue-100 text-blue-800' 
+                                    : 'bg-red-100 text-red-800'
+                                }`}
+                              >
+                                <option value="Sim">Sim</option>
+                                <option value="Não">Não</option>
+                              </select>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+             </div>
+          </div>
+        ) : (
+          /* STANDARD FORM VIEWS */
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            {/* Left Column: Form */}
+            <div className="lg:col-span-2 space-y-6">
+              
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold text-gray-800">
+                    {activeTab === 'geral' && 'Dados do Atendimento'}
+                    {activeTab === 'escala' && 'Checklist de Escalada / Validação'}
+                    {activeTab === 'chamadoEscalado' && 'Registro de Chamado Escalado'}
+                  </h2>
+                  <div className="flex gap-2">
+                    {isLoading && <span className="text-xs text-blue-500 self-center">Salvando...</span>}
+                    <button 
+                      onClick={handleClear}
+                      className="text-gray-400 hover:text-red-500 transition-colors p-1"
+                      title="Limpar campos"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* TAB 1: GERAL */}
+                {activeTab === 'geral' && (
+                  <div className="animate-in fade-in duration-300">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                      <FormInput label="Nome do Analista" value={formData.analystName} onChange={(v) => setFormData({...formData, analystName: v})} placeholder="Seu nome" required />
+                      <FormInput label="Início do Suporte" type="datetime-local" value={formData.startTime} onChange={(v) => setFormData({...formData, startTime: v})} />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <FormInput label="Nome do Local" value={formData.locationName} onChange={(v) => setFormData({...formData, locationName: v})} placeholder="Nome da agência ou local" />
+                      <FormInput label="Task / Chamado" value={formData.task} onChange={(v) => setFormData({...formData, task: v})} placeholder="Número da Task" />
+                      <FormInput label="SR (Service Request)" value={formData.sr} onChange={(v) => setFormData({...formData, sr: v})} placeholder="ID da SR" />
+
+                      <div className="md:col-span-1">
+                        <FormSelect label="Assunto (Subject)" value={formData.subject} options={SUBJECT_OPTIONS} onChange={(v) => setFormData({...formData, subject: v})} required />
+                      </div>
+
+                      {/* Escalation Section */}
+                      <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg border border-gray-100 flex flex-col md:flex-row gap-6">
+                        <div className="flex-shrink-0">
+                            <RadioGroup label="Chamado Escalado?" name="isEscalated" value={formData.isEscalated} onChange={(v) => setFormData({...formData, isEscalated: v})} />
+                        </div>
+                        {formData.isEscalated === 'Sim' && (
+                          <div className="flex-grow animate-in fade-in slide-in-from-left-4 duration-300">
+                              <FormInput label="Nome do Analista do Banco" value={formData.bankAnalystName} onChange={(v) => setFormData({...formData, bankAnalystName: v})} placeholder="Quem solicitou o escalonamento?" />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <FormTextArea label="Problema Relatado (Técnico)" value={formData.problemDescription} onChange={(v) => setFormData({...formData, problemDescription: v})} placeholder="O que o técnico informou..." rows={3} />
+                      </div>
+                      <div className="md:col-span-2">
+                        <FormTextArea label="Ação do Analista" value={formData.actionTaken} onChange={(v) => setFormData({...formData, actionTaken: v})} placeholder="Procedimentos realizados..." rows={4} />
+                      </div>
+
+                      <RadioGroup label="Ligação Devida?" name="validCall" value={formData.validCall} onChange={(v) => setFormData({...formData, validCall: v})} />
+                      <RadioGroup label="Ocorreu Ensinamento?" name="trainingProvided" value={formData.trainingProvided} onChange={(v) => setFormData({...formData, trainingProvided: v})} />
+                      <RadioGroup label="Utilizou ACFS?" name="usedAcfs" value={formData.usedAcfs} onChange={(v) => setFormData({...formData, usedAcfs: v})} />
+                    </div>
+                    {/* End Time Control */}
+                    <div className="mt-8 pt-6 border-t border-gray-100">
+                      <div className="flex flex-col justify-end">
+                          <label className="text-sm font-medium text-gray-700 mb-1">Fim do Suporte</label>
+                          <div className="flex gap-2">
+                            <input type="datetime-local" className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" value={formData.endTime} onChange={(e) => setFormData({...formData, endTime: e.target.value})} />
+                            <button onClick={setEndNow} className="px-3 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-200 transition">Agora</button>
+                          </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: ESCALA / VALIDAÇÃO */}
+                {activeTab === 'escala' && (
+                  <div className="space-y-6 animate-in fade-in duration-300">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                      <FormInput label="Nome do Analista" value={formData.analystName} onChange={(v) => setFormData({...formData, analystName: v})} placeholder="Seu nome" required />
+                      <FormInput label="Início do Suporte" type="datetime-local" value={formData.startTime} onChange={(v) => setFormData({...formData, startTime: v})} />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <FormInput label="Nome do Local" value={formData.locationName} onChange={(v) => setFormData({...formData, locationName: v})} placeholder="Nome da agência ou local" />
+                      <FormInput label="Task / Chamado" value={formData.task} onChange={(v) => setFormData({...formData, task: v})} placeholder="Número da Task" />
+                      <div className="md:col-span-2">
+                        <FormTextArea label="Defeito Reclamado pelo Cliente" value={formData.customerComplaint} onChange={(v) => setFormData({...formData, customerComplaint: v})} placeholder="Descrição do problema na visão do cliente..." rows={2} />
+                      </div>
+                    </div>
+
+                    <div className="bg-purple-50 p-6 rounded-xl border border-purple-100 space-y-6">
+                      <h3 className="font-semibold text-purple-800 border-b border-purple-200 pb-2">Checklist de Validação</h3>
+                      
+                      <div className="flex flex-col">
+                        <label className="text-base font-bold text-gray-800 mb-2">Validado? (Define tag #VLDD# / #NVLDD#)</label>
+                        <div className="flex space-x-6">
+                          <label className="inline-flex items-center cursor-pointer p-3 bg-white rounded-lg border border-gray-200 hover:border-green-400">
+                            <input type="radio" name="isValidated" value="Sim" checked={formData.isValidated === 'Sim'} onChange={() => setFormData({...formData, isValidated: 'Sim'})} className="form-radio h-5 w-5 text-green-600" />
+                            <span className="ml-2 font-medium text-gray-700">Sim (#VLDD#)</span>
+                          </label>
+                          <label className="inline-flex items-center cursor-pointer p-3 bg-white rounded-lg border border-gray-200 hover:border-red-400">
+                            <input type="radio" name="isValidated" value="Não" checked={formData.isValidated === 'Não'} onChange={() => setFormData({...formData, isValidated: 'Não'})} className="form-radio h-5 w-5 text-red-600" />
+                            <span className="ml-2 font-medium text-gray-700">Não (#NVLDD#)</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <RadioGroup label="Plano de ação efetivo?" name="isActionPlanEffective" value={formData.isActionPlanEffective} onChange={(v) => setFormData({...formData, isActionPlanEffective: v})} />
+                        <RadioGroup label="Utilizou Diag?" name="usedDiagValidation" value={formData.usedDiagValidation} onChange={(v) => setFormData({...formData, usedDiagValidation: v})} />
+                        <RadioGroup label="Cartão de testes?" name="usedTestCard" value={formData.usedTestCard} onChange={(v) => setFormData({...formData, usedTestCard: v})} />
+                      
+                        <div className="bg-white p-4 rounded-lg border border-gray-200">
+                          <RadioGroup label="Foi trocado alguma peça?" name="wasPartChanged" value={formData.wasPartChanged} onChange={(v) => setFormData({...formData, wasPartChanged: v})} />
+                          {formData.wasPartChanged === 'Sim' && (
+                            <div className="mt-3">
+                              <input type="text" placeholder="Qual peça?" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" value={formData.partChangedDescription} onChange={(e) => setFormData({...formData, partChangedDescription: e.target.value})} />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-sm font-medium text-gray-700 mb-2 block">SIC - Itens Verificados</label>
+                        <div className="flex flex-wrap gap-4">
+                          {(['Saques', 'Depositos', 'Sensores', 'SmartPower'] as SicOption[]).map((opt) => (
+                            <label key={opt} className="inline-flex items-center cursor-pointer select-none">
+                                <input type="checkbox" checked={formData.sicOptions.includes(opt)} onChange={() => toggleSicOption(opt)} className="h-4 w-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500" />
+                                <span className="ml-2 text-sm text-gray-700">{opt}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-purple-200">
+                        <FormInput label="Nome do Cliente (Acompanhamento)" value={formData.customerName} onChange={(v) => setFormData({...formData, customerName: v})} placeholder="Nome completo" />
+                        <FormInput label="Matrícula" value={formData.customerBadge} onChange={(v) => setFormData({...formData, customerBadge: v})} placeholder="Matrícula / ID" />
+                      </div>
+                    </div>
+                    {/* End Time Control */}
+                    <div className="mt-8 pt-6 border-t border-gray-100">
+                      <div className="flex flex-col justify-end">
+                          <label className="text-sm font-medium text-gray-700 mb-1">Fim do Suporte</label>
+                          <div className="flex gap-2">
+                            <input type="datetime-local" className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm" value={formData.endTime} onChange={(e) => setFormData({...formData, endTime: e.target.value})} />
+                            <button onClick={setEndNow} className="px-3 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-200 transition">Agora</button>
+                          </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: CHAMADO / ESCALADO */}
+                {activeTab === 'chamadoEscalado' && (
+                  <div className="space-y-6 animate-in fade-in duration-300">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <FormInput label="Nome do Analista (Você)" value={formData.analystName} onChange={(v) => setFormData({...formData, analystName: v})} placeholder="Seu nome" required />
+                      <FormInput label="Data da Escalada" type="datetime-local" value={formData.escalationDate} onChange={(v) => setFormData({...formData, escalationDate: v})} />
+                    </div>
+                    
+                    <div className="bg-orange-50 p-6 rounded-xl border border-orange-200">
+                      <h3 className="font-semibold text-orange-800 border-b border-orange-200 pb-4 mb-4">Detalhes da Escalada</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <FormInput label="Nome do Local" value={formData.locationName} onChange={(v) => setFormData({...formData, locationName: v})} placeholder="Local da escalada" />
+                        <FormInput label="Task / Chamado" value={formData.task} onChange={(v) => setFormData({...formData, task: v})} placeholder="ID do chamado" />
+                        <div className="md:col-span-2">
+                          <FormInput label="Técnico" value={formData.technicianName} onChange={(v) => setFormData({...formData, technicianName: v})} placeholder="Nome do técnico responsável" />
+                        </div>
+                        <div className="md:col-span-2">
+                          <FormTextArea label="Defeito Reclamado pelo Cliente" value={formData.customerComplaint} onChange={(v) => setFormData({...formData, customerComplaint: v})} placeholder="Descrição do problema..." rows={3} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
+
+            {/* Right Column: Preview & Actions */}
+            <div className="lg:col-span-1 space-y-6">
+              
+              {/* Action Card */}
+              <div className="bg-white rounded-xl shadow-lg border border-blue-100 p-6 sticky top-24">
+                <h3 className="text-sm uppercase tracking-wide text-gray-500 font-bold mb-4">Resumo e Ações</h3>
+                
+                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 mb-4 max-h-96 overflow-y-auto">
+                  <pre className="whitespace-pre-wrap text-xs text-gray-700 font-mono leading-relaxed">
+                    {summary || <span className="text-gray-400 italic">Preencha o formulário para gerar o resumo...</span>}
+                  </pre>
+                </div>
+
+                <div className="space-y-3">
+                  <button
+                    onClick={handleCopy}
+                    className={`w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg text-sm font-medium transition-all duration-200 ${
+                      copied 
+                        ? 'bg-green-100 text-green-700 border border-green-200' 
+                        : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400'
+                    }`}
+                  >
+                    {copied ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <ClipboardCopy className="w-4 h-4" />
+                        <span>Copiar Resumo</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={handleRegister}
+                    disabled={isLoading}
+                    className={`w-full flex items-center justify-center space-x-2 py-3 px-4 bg-blue-600 text-white rounded-lg shadow-md font-medium transition-all duration-200 ${
+                      isLoading ? 'opacity-75 cursor-not-allowed' : 'hover:bg-blue-700 active:bg-blue-800 hover:shadow-lg'
+                    }`}
+                  >
+                    {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                    <span>{isLoading ? 'Salvando...' : 'Registrar Atendimento'}</span>
+                  </button>
+                  <p className="text-xs text-center text-gray-400 mt-2">
+                    * Salva no banco de dados e copia para a área de transferência.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* History Section (Visible on General Tabs, hidden on Dashboard since Dashboard basically replaces it for Escalations) */}
+        {activeTab !== 'dashboard' && history.length > 0 && (
+          <div className="mt-12">
+            <div className="flex items-center space-x-2 mb-4">
+              <History className="w-5 h-5 text-gray-500" />
+              <h2 className="text-lg font-bold text-gray-800">Histórico de Atendimentos</h2>
+            </div>
+            <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hora</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assunto / Task</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Local</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {history.map((record) => (
+                      <tr key={record.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {formatDisplayDate(record.startTime)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                          {record.subject ? record.subject.split('-')[0] : record.task}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {record.locationName || '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {record.recordType === 'VALIDATION' ? (
+                            <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                              #VLDD#
+                            </span>
+                          ) : record.recordType === 'ESCALATION' ? (
+                             <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-orange-100 text-orange-800">
+                              Escalado
+                            </span>
+                          ) : (
+                             <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                              Geral
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </main>
+    </div>
+  );
+};
+
+export default App;
