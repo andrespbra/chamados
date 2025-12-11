@@ -16,7 +16,12 @@ import {
   WifiOff,
   Settings,
   X,
-  Database
+  Database,
+  Lock,
+  ShieldCheck,
+  FileClock,
+  Search,
+  Eye
 } from 'lucide-react';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
 import { FormInput } from './components/FormInput';
@@ -24,10 +29,10 @@ import { FormSelect } from './components/FormSelect';
 import { FormTextArea } from './components/FormTextArea';
 import { RadioGroup } from './components/RadioGroup';
 import { getFormattedDateTime, formatDisplayDate } from './utils';
-import { supabase, isSupabaseConfigured, saveSupabaseConfig, clearSupabaseConfig } from './supabaseClient';
+import { supabase, isSupabaseConfigured, saveSupabaseConfig, clearSupabaseConfig, configSource } from './supabaseClient';
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'geral' | 'escala' | 'chamadoEscalado' | 'dashboard'>('geral');
+  const [activeTab, setActiveTab] = useState<'geral' | 'escala' | 'chamadoEscalado' | 'dashboard' | 'registros'>('geral');
   const [formData, setFormData] = useState<Omit<SupportRecord, 'id'>>({
     ...INITIAL_STATE,
     startTime: getFormattedDateTime(),
@@ -38,6 +43,10 @@ const App: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
+  // Search & View State
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedRecord, setSelectedRecord] = useState<SupportRecord | null>(null);
+
   // Settings Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [configUrl, setConfigUrl] = useState('');
@@ -288,13 +297,25 @@ const App: React.FC = () => {
   // Filter history for dashboard
   const dashboardData = history.filter(item => item.recordType === 'ESCALATION');
 
+  // Filter for records view
+  const filteredRecords = history.filter(item => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+    return (
+      item.task?.toLowerCase().includes(searchLower) ||
+      item.sr?.toLowerCase().includes(searchLower) ||
+      item.analystName?.toLowerCase().includes(searchLower) ||
+      item.locationName?.toLowerCase().includes(searchLower)
+    );
+  });
+
   return (
     <div className="min-h-screen pb-12 bg-gray-50 relative">
       
-      {/* Config Modal */}
+      {/* Settings Modal */}
       {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
             <div className="bg-gray-800 text-white px-6 py-4 flex justify-between items-center">
               <h3 className="font-semibold flex items-center gap-2">
                 <Database className="w-5 h-5" />
@@ -304,49 +325,268 @@ const App: React.FC = () => {
                 <X className="w-5 h-5" />
               </button>
             </div>
+            
             <div className="p-6 space-y-4">
-              <p className="text-sm text-gray-600 mb-4">
-                Insira as credenciais do seu projeto Supabase para ativar o modo online.
-              </p>
-              
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-700 uppercase">Project URL</label>
-                <input 
-                  type="text" 
-                  value={configUrl}
-                  onChange={(e) => setConfigUrl(e.target.value)}
-                  placeholder="https://seu-projeto.supabase.co"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
+              {configSource === 'env' ? (
+                <div className="text-center py-6">
+                  <ShieldCheck className="w-16 h-16 text-green-500 mx-auto mb-4" />
+                  <h4 className="text-lg font-bold text-gray-800 mb-2">Ambiente Seguro Ativo</h4>
+                  <p className="text-sm text-gray-600">
+                    O aplicativo está conectado via Variáveis de Ambiente do Servidor.
+                    Suas credenciais estão protegidas e você não precisa configurar nada aqui.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Para uso temporário ou testes. Para uso definitivo, configure as variáveis de ambiente no Vercel.
+                  </p>
+                  
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-700 uppercase">Project URL</label>
+                    <input 
+                      type="text" 
+                      value={configUrl}
+                      onChange={(e) => setConfigUrl(e.target.value)}
+                      placeholder="https://seu-projeto.supabase.co"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-700 uppercase">API Key (Anon/Public)</label>
-                <input 
-                  type="password" 
-                  value={configKey}
-                  onChange={(e) => setConfigKey(e.target.value)}
-                  placeholder="eyJh..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-700 uppercase">API Key (Anon/Public)</label>
+                    <input 
+                      type="password" 
+                      value={configKey}
+                      onChange={(e) => setConfigKey(e.target.value)}
+                      placeholder="eyJh..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
 
-              <div className="pt-4 flex gap-3">
-                {isSupabaseConfigured && (
-                  <button 
-                    onClick={clearSupabaseConfig}
-                    className="flex-1 py-2 px-4 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium"
-                  >
-                    Desconectar
-                  </button>
-                )}
-                <button 
-                  onClick={handleSaveConfig}
-                  className="flex-1 py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md text-sm font-medium"
-                >
-                  Salvar e Conectar
-                </button>
-              </div>
+                  <div className="pt-4 flex gap-3">
+                    {isSupabaseConfigured && (
+                      <button 
+                        onClick={clearSupabaseConfig}
+                        className="flex-1 py-2 px-4 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium"
+                      >
+                        Desconectar
+                      </button>
+                    )}
+                    <button 
+                      onClick={handleSaveConfig}
+                      className="flex-1 py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md text-sm font-medium"
+                    >
+                      Salvar Localmente
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detail View Modal */}
+      {selectedRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="bg-gray-800 text-white px-6 py-4 flex justify-between items-center shrink-0">
+               <div>
+                  <h3 className="font-semibold text-lg flex items-center gap-2">
+                    Detalhes do Atendimento
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-1">
+                    ID: {selectedRecord.id} | Tipo: {selectedRecord.recordType}
+                  </p>
+               </div>
+              <button onClick={() => setSelectedRecord(null)} className="text-gray-400 hover:text-white transition">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto">
+               {/* Common Header Fields */}
+               <div className="grid grid-cols-2 gap-4 mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                  <div>
+                    <span className="text-xs font-bold text-gray-500 uppercase block">Data/Hora</span>
+                    <span className="text-sm text-gray-800">{formatDisplayDate(selectedRecord.startTime)}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-gray-500 uppercase block">Analista</span>
+                    <span className="text-sm text-gray-800">{selectedRecord.analystName}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-gray-500 uppercase block">Local</span>
+                    <span className="text-sm text-gray-800">{selectedRecord.locationName}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-gray-500 uppercase block">Task / SR</span>
+                    <span className="text-sm text-gray-800">{selectedRecord.task} {selectedRecord.sr ? `/ ${selectedRecord.sr}` : ''}</span>
+                  </div>
+               </div>
+
+               {/* TYPE: GENERAL */}
+               {(selectedRecord.recordType === 'GENERAL' || !selectedRecord.recordType) && (
+                 <div className="space-y-4">
+                    <div>
+                      <span className="text-xs font-bold text-gray-500 uppercase block">Assunto</span>
+                      <p className="text-sm bg-blue-50 text-blue-800 px-2 py-1 rounded inline-block">{selectedRecord.subject}</p>
+                    </div>
+                    {selectedRecord.isEscalated === 'Sim' && (
+                       <div className="bg-red-50 p-3 rounded border border-red-100">
+                         <span className="text-xs font-bold text-red-800 uppercase block mb-1">Escalado Por</span>
+                         <span className="text-sm text-red-700">{selectedRecord.bankAnalystName}</span>
+                       </div>
+                    )}
+                    <div>
+                       <span className="text-xs font-bold text-gray-500 uppercase block mb-1">Problema Relatado</span>
+                       <div className="bg-gray-50 p-3 rounded border border-gray-200 text-sm text-gray-700 whitespace-pre-wrap">
+                         {selectedRecord.problemDescription || 'N/A'}
+                       </div>
+                    </div>
+                    <div>
+                       <span className="text-xs font-bold text-gray-500 uppercase block mb-1">Ação do Analista</span>
+                       <div className="bg-gray-50 p-3 rounded border border-gray-200 text-sm text-gray-700 whitespace-pre-wrap">
+                         {selectedRecord.actionTaken || 'N/A'}
+                       </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center pt-2">
+                       <div className="bg-gray-100 p-2 rounded">
+                          <span className="block text-xs text-gray-500">Ligação Devida?</span>
+                          <span className="font-bold text-sm">{selectedRecord.validCall}</span>
+                       </div>
+                       <div className="bg-gray-100 p-2 rounded">
+                          <span className="block text-xs text-gray-500">Ensinamento?</span>
+                          <span className="font-bold text-sm">{selectedRecord.trainingProvided}</span>
+                       </div>
+                       <div className="bg-gray-100 p-2 rounded">
+                          <span className="block text-xs text-gray-500">ACFS?</span>
+                          <span className="font-bold text-sm">{selectedRecord.usedAcfs}</span>
+                       </div>
+                    </div>
+                 </div>
+               )}
+
+               {/* TYPE: VALIDATION (ESCALADA) */}
+               {selectedRecord.recordType === 'VALIDATION' && (
+                 <div className="space-y-4">
+                    <div>
+                       <span className="text-xs font-bold text-gray-500 uppercase block mb-1">Defeito Reclamado (Cliente)</span>
+                       <div className="bg-gray-50 p-3 rounded border border-gray-200 text-sm text-gray-700">
+                         {selectedRecord.customerComplaint || 'N/A'}
+                       </div>
+                    </div>
+                    
+                    <div className="border-t border-gray-200 pt-4 mt-4">
+                       <h4 className="text-sm font-bold text-gray-800 mb-3 uppercase">Checklist de Validação</h4>
+                       <div className="grid grid-cols-2 gap-4">
+                          <div className={`p-3 rounded border ${selectedRecord.isValidated === 'Sim' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                             <span className="block text-xs text-gray-500">Validado?</span>
+                             <span className={`font-bold ${selectedRecord.isValidated === 'Sim' ? 'text-green-700' : 'text-red-700'}`}>
+                               {selectedRecord.isValidated} {selectedRecord.isValidated === 'Sim' ? '(#VLDD#)' : '(#NVLDD#)'}
+                             </span>
+                          </div>
+                          <div className="p-3 rounded border bg-gray-50 border-gray-200">
+                             <span className="block text-xs text-gray-500">Plano Efetivo?</span>
+                             <span className="font-bold text-gray-800">{selectedRecord.isActionPlanEffective}</span>
+                          </div>
+                          <div className="col-span-2 p-3 rounded border bg-gray-50 border-gray-200">
+                             <span className="block text-xs text-gray-500">Peça Trocada?</span>
+                             <span className="font-bold text-gray-800">{selectedRecord.wasPartChanged}</span>
+                             {selectedRecord.wasPartChanged === 'Sim' && (
+                               <span className="block text-sm text-gray-600 mt-1 border-t border-gray-200 pt-1">
+                                 {selectedRecord.partChangedDescription}
+                               </span>
+                             )}
+                          </div>
+                          <div className="p-3 rounded border bg-gray-50 border-gray-200">
+                             <span className="block text-xs text-gray-500">Diag Completo?</span>
+                             <span className="font-bold text-gray-800">{selectedRecord.usedDiagValidation}</span>
+                          </div>
+                          <div className="p-3 rounded border bg-gray-50 border-gray-200">
+                             <span className="block text-xs text-gray-500">Cartão Teste?</span>
+                             <span className="font-bold text-gray-800">{selectedRecord.usedTestCard}</span>
+                          </div>
+                       </div>
+                    </div>
+
+                    <div className="border-t border-gray-200 pt-4">
+                       <span className="text-xs font-bold text-gray-500 uppercase block mb-2">SIC - Itens</span>
+                       <div className="flex gap-2 flex-wrap">
+                          {selectedRecord.sicOptions && selectedRecord.sicOptions.length > 0 ? (
+                            selectedRecord.sicOptions.map(opt => (
+                              <span key={opt} className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded-full font-medium">
+                                {opt}
+                              </span>
+                            ))
+                          ) : <span className="text-sm text-gray-400">Nenhum item selecionado</span>}
+                       </div>
+                    </div>
+
+                     <div className="border-t border-gray-200 pt-4">
+                        <span className="text-xs font-bold text-gray-500 uppercase block mb-1">Acompanhamento</span>
+                        <p className="text-sm text-gray-800">
+                           {selectedRecord.customerName} 
+                           {selectedRecord.customerBadge && <span className="text-gray-500 ml-1">(Mat: {selectedRecord.customerBadge})</span>}
+                        </p>
+                     </div>
+                 </div>
+               )}
+
+               {/* TYPE: ESCALATION (CHAMADO ESCALADO) */}
+               {selectedRecord.recordType === 'ESCALATION' && (
+                  <div className="space-y-4">
+                     <div className="bg-orange-50 border border-orange-200 p-4 rounded-lg mb-4">
+                        <span className="text-xs font-bold text-orange-800 uppercase block mb-1">Dados da Escalada</span>
+                        <div className="grid grid-cols-2 gap-4 mt-2">
+                           <div>
+                              <span className="block text-xs text-gray-500">Data Escalada</span>
+                              <span className="font-medium text-gray-800">{formatDisplayDate(selectedRecord.escalationDate)}</span>
+                           </div>
+                           <div>
+                              <span className="block text-xs text-gray-500">Técnico</span>
+                              <span className="font-medium text-gray-800">{selectedRecord.technicianName}</span>
+                           </div>
+                        </div>
+                     </div>
+                     
+                     <div>
+                       <span className="text-xs font-bold text-gray-500 uppercase block mb-1">Defeito Reclamado (Cliente)</span>
+                       <div className="bg-gray-50 p-3 rounded border border-gray-200 text-sm text-gray-700">
+                         {selectedRecord.customerComplaint || 'N/A'}
+                       </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200">
+                       <div className="text-center p-3 bg-gray-50 rounded">
+                          <span className="block text-xs text-gray-500 mb-1">Status Atual</span>
+                          <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${
+                             selectedRecord.status === 'Aberto' ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'
+                          }`}>
+                             {selectedRecord.status}
+                          </span>
+                       </div>
+                       <div className="text-center p-3 bg-gray-50 rounded">
+                          <span className="block text-xs text-gray-500 mb-1">Validação Escalada</span>
+                          <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${
+                             selectedRecord.escalationValidation === 'Sim' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'
+                          }`}>
+                             {selectedRecord.escalationValidation}
+                          </span>
+                       </div>
+                    </div>
+                  </div>
+               )}
+            </div>
+
+            <div className="bg-gray-100 px-6 py-4 flex justify-end shrink-0">
+               <button 
+                  onClick={() => setSelectedRecord(null)}
+                  className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+               >
+                  Fechar
+               </button>
             </div>
           </div>
         </div>
@@ -365,6 +605,7 @@ const App: React.FC = () => {
           </div>
           <div className="flex items-center space-x-2 text-sm text-gray-500">
              {isLoading && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
+             
              {!isSupabaseConfigured ? (
                 <div 
                   className="flex items-center text-orange-500 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-200 cursor-pointer hover:bg-orange-100 transition"
@@ -374,14 +615,23 @@ const App: React.FC = () => {
                   <WifiOff className="w-4 h-4 mr-1.5" />
                   <span className="text-xs font-bold">Offline</span>
                 </div>
+             ) : configSource === 'env' ? (
+                <div 
+                  className="flex items-center text-blue-700 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-200 cursor-pointer hover:bg-blue-100 transition"
+                  onClick={() => setIsSettingsOpen(true)}
+                  title="Conectado via Servidor (Seguro)"
+                >
+                  <ShieldCheck className="w-4 h-4 mr-1.5" />
+                  <span className="text-xs font-bold">Ambiente Seguro</span>
+                </div>
              ) : (
                 <div 
                   className="flex items-center text-green-600 bg-green-50 px-3 py-1.5 rounded-full border border-green-200 cursor-pointer hover:bg-green-100 transition"
                   onClick={() => setIsSettingsOpen(true)}
-                  title="Conectado ao Banco de Dados"
+                  title="Conectado via Browser"
                 >
                   <Database className="w-4 h-4 mr-1.5" />
-                  <span className="text-xs font-bold">Online</span>
+                  <span className="text-xs font-bold">Online (Local)</span>
                 </div>
              )}
              
@@ -399,10 +649,10 @@ const App: React.FC = () => {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         {/* Navigation Tabs */}
-        <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-1 bg-gray-200 p-1 rounded-lg mb-8">
+        <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-1 bg-gray-200 p-1 rounded-lg mb-8 overflow-x-auto">
           <button
             onClick={() => setActiveTab('geral')}
-            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 text-sm font-medium rounded-md transition-all ${
+            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
               activeTab === 'geral' 
                 ? 'bg-white text-blue-600 shadow-sm' 
                 : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -413,7 +663,7 @@ const App: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('escala')}
-            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 text-sm font-medium rounded-md transition-all ${
+            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
               activeTab === 'escala' 
                 ? 'bg-white text-purple-600 shadow-sm' 
                 : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -424,7 +674,7 @@ const App: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('chamadoEscalado')}
-            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 text-sm font-medium rounded-md transition-all ${
+            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
               activeTab === 'chamadoEscalado' 
                 ? 'bg-white text-orange-600 shadow-sm' 
                 : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -435,7 +685,7 @@ const App: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('dashboard')}
-            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 text-sm font-medium rounded-md transition-all ${
+            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
               activeTab === 'dashboard' 
                 ? 'bg-white text-indigo-600 shadow-sm' 
                 : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -444,9 +694,129 @@ const App: React.FC = () => {
             <LayoutDashboard className="w-4 h-4" />
             <span>Dashboard</span>
           </button>
+          <button
+            onClick={() => setActiveTab('registros')}
+            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
+              activeTab === 'registros' 
+                ? 'bg-white text-teal-600 shadow-sm' 
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <FileClock className="w-4 h-4" />
+            <span>Registros</span>
+          </button>
         </div>
 
-        {activeTab === 'dashboard' ? (
+        {activeTab === 'registros' ? (
+          /* REGISTROS (ALL RECORDS) VIEW */
+          <div className="animate-in fade-in duration-300">
+             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="px-6 py-5 border-b border-gray-200 bg-teal-50/50 flex flex-col md:flex-row justify-between items-center gap-4">
+                   <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                     <FileClock className="w-5 h-5 text-teal-600" />
+                     Todos os Registros
+                   </h2>
+                   
+                   {/* Search Bar */}
+                   <div className="relative w-full md:w-96">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Search className="h-4 w-4 text-gray-400" />
+                      </div>
+                      <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-teal-500 focus:border-teal-500 sm:text-sm transition duration-150 ease-in-out"
+                        placeholder="Consultar por Task ou SR..."
+                      />
+                   </div>
+
+                   <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm whitespace-nowrap">
+                     Total: {filteredRecords.length}
+                   </span>
+                </div>
+                
+                {filteredRecords.length === 0 ? (
+                  <div className="p-12 text-center text-gray-500">
+                     {isLoading ? (
+                        <div className="flex flex-col items-center">
+                          <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-2" />
+                          <p>Carregando histórico...</p>
+                        </div>
+                     ) : (
+                       <>
+                        <History className="w-12 h-12 mx-auto text-gray-300 mb-4" />
+                        <p>{searchTerm ? 'Nenhum registro encontrado para a busca.' : 'Nenhum atendimento registrado ainda.'}</p>
+                       </>
+                     )}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Analista</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Local</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task / SR</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assunto</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
+                          <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {filteredRecords.map((record) => (
+                          <tr key={record.id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                              {formatDisplayDate(record.startTime)}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                              {record.analystName}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                              {record.locationName || '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                              <span className="font-mono bg-gray-100 px-2 py-1 rounded text-xs">
+                                {record.task} {record.sr ? `/ ${record.sr}` : ''}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                              {record.subject ? record.subject.split('-')[0] : '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              {record.recordType === 'VALIDATION' ? (
+                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                                  #VLDD#
+                                </span>
+                              ) : record.recordType === 'ESCALATION' ? (
+                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-orange-100 text-orange-800">
+                                  Escalado
+                                </span>
+                              ) : (
+                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                                  Geral
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-center">
+                              <button
+                                onClick={() => setSelectedRecord(record)}
+                                className="inline-flex items-center space-x-1 px-3 py-1 bg-white border border-gray-300 rounded-full text-xs font-medium text-gray-700 hover:bg-gray-100 transition shadow-sm"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Exibir</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+             </div>
+          </div>
+        ) : activeTab === 'dashboard' ? (
           /* DASHBOARD VIEW */
           <div className="animate-in fade-in duration-300">
              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -785,7 +1155,7 @@ const App: React.FC = () => {
         )}
 
         {/* History Section (Visible on General Tabs, hidden on Dashboard since Dashboard basically replaces it for Escalations) */}
-        {activeTab !== 'dashboard' && history.length > 0 && (
+        {activeTab !== 'dashboard' && activeTab !== 'registros' && history.length > 0 && (
           <div className="mt-12">
             <div className="flex items-center space-x-2 mb-4">
               <History className="w-5 h-5 text-gray-500" />

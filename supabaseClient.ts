@@ -15,6 +15,9 @@ const supabaseKey = envKey || localKey || '';
 // Exporta flag para saber se está configurado
 export const isSupabaseConfigured = !!(supabaseUrl && supabaseKey);
 
+// Identifica a origem da configuração para mostrar na UI
+export const configSource: 'env' | 'local' | 'none' = envUrl ? 'env' : (localUrl ? 'local' : 'none');
+
 if (!isSupabaseConfigured) {
   console.warn('AVISO: Credenciais do Supabase não encontradas. O app funcionará em modo offline.');
 }
