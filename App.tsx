@@ -21,7 +21,10 @@ import {
   ShieldCheck,
   FileClock,
   Search,
-  Eye
+  Eye,
+  Download,
+  FileSpreadsheet,
+  Filter
 } from 'lucide-react';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
 import { FormInput } from './components/FormInput';
@@ -46,6 +49,7 @@ const App: React.FC = () => {
   // Search & View State
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRecord, setSelectedRecord] = useState<SupportRecord | null>(null);
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
 
   // Settings Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -284,6 +288,111 @@ const App: React.FC = () => {
       alert("Erro ao atualizar o registro.");
       setHistory(originalHistory); // Reverte em caso de erro
     }
+  };
+
+  const handleDeleteRecord = async (id: string) => {
+    if (!window.confirm("Tem certeza que deseja excluir este registro permanentemente?")) {
+      return;
+    }
+
+    setIsLoading(true);
+    
+    // Atualiza estado local imediatamente
+    setHistory(prev => prev.filter(item => item.id !== id));
+    if (selectedRecord?.id === id) setSelectedRecord(null);
+
+    try {
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from('support_records')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+      }
+    } catch (err: any) {
+      console.error("Erro ao excluir:", err);
+      alert(`Erro ao excluir do banco de dados: ${err.message}`);
+      // Em um app ideal, reverteríamos o estado local aqui se falhasse
+      fetchRecords(); // Recarrega para garantir sincronia
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleExportReport = (type: 'ALL' | 'VLDD' | 'NVLDD' | 'ESCALATION') => {
+    let dataToExport = history;
+    let filename = 'relatorio_geral.csv';
+
+    switch (type) {
+      case 'VLDD':
+        dataToExport = history.filter(r => r.recordType === 'VALIDATION' && r.isValidated === 'Sim');
+        filename = 'relatorio_validado_vldd.csv';
+        break;
+      case 'NVLDD':
+        dataToExport = history.filter(r => r.recordType === 'VALIDATION' && r.isValidated === 'Não');
+        filename = 'relatorio_nao_validado_nvldd.csv';
+        break;
+      case 'ESCALATION':
+        dataToExport = history.filter(r => r.recordType === 'ESCALATION');
+        filename = 'relatorio_escaladas.csv';
+        break;
+      default:
+        filename = 'relatorio_completo_ura.csv';
+    }
+
+    if (dataToExport.length === 0) {
+      alert("Não há dados para exportar com este filtro.");
+      return;
+    }
+
+    // Define columns based on context, or just dump everything useful
+    const headers = [
+      'Data/Hora',
+      'Tipo',
+      'Analista',
+      'Local',
+      'Task/SR',
+      'Assunto',
+      'Validado?',
+      'Escalado Por',
+      'Técnico',
+      'Defeito Cliente'
+    ];
+
+    const csvRows = [
+      headers.join(';'), // CSV header
+      ...dataToExport.map(row => {
+        const typeLabel = row.recordType === 'VALIDATION' ? (row.isValidated === 'Sim' ? 'VLDD' : 'NVLDD') : row.recordType;
+        const subjectClean = row.subject ? row.subject.replace(/;/g, ',') : '';
+        const taskSr = `${row.task || ''} ${row.sr ? '/ ' + row.sr : ''}`;
+        
+        return [
+          formatDisplayDate(row.startTime),
+          typeLabel,
+          row.analystName,
+          row.locationName,
+          taskSr,
+          subjectClean,
+          row.isValidated || '-',
+          row.bankAnalystName || '-',
+          row.technicianName || '-',
+          (row.customerComplaint || '').replace(/;/g, ',').replace(/\n/g, ' ')
+        ].map(field => `"${field}"`).join(';'); // Quote fields to handle separators inside content
+      })
+    ];
+
+    const csvContent = "\uFEFF" + csvRows.join('\n'); // Add BOM for Excel UTF-8 compatibility
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setIsExportMenuOpen(false);
   };
 
   const handleSaveConfig = () => {
@@ -717,23 +826,49 @@ const App: React.FC = () => {
                      Todos os Registros
                    </h2>
                    
-                   {/* Search Bar */}
-                   <div className="relative w-full md:w-96">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Search className="h-4 w-4 text-gray-400" />
-                      </div>
-                      <input
-                        type="text"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-teal-500 focus:border-teal-500 sm:text-sm transition duration-150 ease-in-out"
-                        placeholder="Consultar por Task ou SR..."
-                      />
-                   </div>
+                   <div className="flex gap-2 w-full md:w-auto flex-1 justify-end">
+                     {/* Search Bar */}
+                     <div className="relative w-full md:w-80">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                          <Search className="h-4 w-4 text-gray-400" />
+                        </div>
+                        <input
+                          type="text"
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-teal-500 focus:border-teal-500 sm:text-sm transition duration-150 ease-in-out"
+                          placeholder="Consultar por Task ou SR..."
+                        />
+                     </div>
 
-                   <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm whitespace-nowrap">
-                     Total: {filteredRecords.length}
-                   </span>
+                     {/* Export Button */}
+                     <div className="relative">
+                       <button
+                         onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
+                         className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-md shadow-sm hover:bg-teal-700 transition text-sm font-medium whitespace-nowrap"
+                       >
+                         <FileSpreadsheet className="w-4 h-4" />
+                         Relatórios
+                       </button>
+
+                       {isExportMenuOpen && (
+                         <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-20 border border-gray-200 animate-in fade-in slide-in-from-top-2 duration-150">
+                            <button onClick={() => handleExportReport('ALL')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                              <Download className="w-3 h-3" /> Geral (Todos)
+                            </button>
+                            <button onClick={() => handleExportReport('ESCALATION')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                              <AlertTriangle className="w-3 h-3 text-orange-500" /> Apenas Escaladas
+                            </button>
+                            <button onClick={() => handleExportReport('VLDD')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                              <CheckCircle2 className="w-3 h-3 text-green-500" /> Validadas (VLDD)
+                            </button>
+                            <button onClick={() => handleExportReport('NVLDD')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                              <X className="w-3 h-3 text-red-500" /> Não Validadas (NVLDD)
+                            </button>
+                         </div>
+                       )}
+                     </div>
+                   </div>
                 </div>
                 
                 {filteredRecords.length === 0 ? (
@@ -800,13 +935,23 @@ const App: React.FC = () => {
                               )}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-center">
-                              <button
-                                onClick={() => setSelectedRecord(record)}
-                                className="inline-flex items-center space-x-1 px-3 py-1 bg-white border border-gray-300 rounded-full text-xs font-medium text-gray-700 hover:bg-gray-100 transition shadow-sm"
-                              >
-                                <Eye className="w-3 h-3" />
-                                <span>Exibir</span>
-                              </button>
+                              <div className="flex items-center justify-center space-x-2">
+                                <button
+                                  onClick={() => setSelectedRecord(record)}
+                                  className="inline-flex items-center space-x-1 px-3 py-1 bg-white border border-gray-300 rounded-full text-xs font-medium text-gray-700 hover:bg-gray-100 transition shadow-sm"
+                                  title="Ver Detalhes"
+                                >
+                                  <Eye className="w-3 h-3" />
+                                  <span className="hidden md:inline">Exibir</span>
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteRecord(record.id)}
+                                  className="inline-flex items-center justify-center p-1.5 bg-red-50 border border-red-200 rounded-full text-red-600 hover:bg-red-100 transition shadow-sm"
+                                  title="Excluir Registro"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
