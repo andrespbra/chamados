@@ -9,9 +9,9 @@ const envKey = import.meta.env?.VITE_SUPABASE_ANON_KEY;
 const localUrl = localStorage.getItem('hw_supa_url');
 const localKey = localStorage.getItem('hw_supa_key');
 
-// Define as credenciais finais
-const realUrl = envUrl || localUrl;
-const realKey = envKey || localKey;
+// Define as credenciais finais com Trim para segurança
+const realUrl = (envUrl || localUrl || '').trim();
+const realKey = (envKey || localKey || '').trim();
 
 // Flag de configuração.
 // Sempre true pois temos o Mock como fallback.
@@ -148,9 +148,9 @@ let supabaseInstance: any;
 if (realUrl && realKey) {
   try {
     supabaseInstance = createClient(realUrl, realKey);
-    console.log('Cliente Supabase Online Iniciado (URL/Key fornecidos).');
+    console.log('Cliente Supabase Online Iniciado.');
   } catch (e) {
-    console.error('Erro ao iniciar Supabase real, usando Mock.', e);
+    console.error('Erro ao iniciar Supabase real (URL inválida?), usando Mock.', e);
     supabaseInstance = mockClient;
   }
 } else {

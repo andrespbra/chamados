@@ -243,9 +243,13 @@ const App: React.FC = () => {
     } catch (error: any) {
       console.error("Login Error:", error);
       if (error.message === 'Failed to fetch') {
-         setAuthError('Erro de conexão com o servidor. Verifique sua internet ou configurações.');
+         setAuthError('Erro de conexão. Verifique URL/Key e sua internet.');
+      } else if (error.message.includes('Email not confirmed')) {
+         setAuthError('E-mail não confirmado. Verifique sua caixa de entrada.');
+      } else if (error.message.includes('Invalid login credentials')) {
+         setAuthError('Usuário ou senha incorretos.');
       } else {
-         setAuthError(error.message || 'Falha na autenticação. Verifique usuário e senha.');
+         setAuthError(error.message || 'Falha na autenticação.');
       }
     } finally {
       setAuthLoading(false);
@@ -264,7 +268,7 @@ const App: React.FC = () => {
         password: loginPassword,
       });
       if (error) throw error;
-      setAuthError('Cadastro realizado! Se necessário, verifique o e-mail cadastrado.');
+      setAuthError('Cadastro iniciado! Se o banco exigir confirmação, verifique seu e-mail.');
       setIsSignUp(false);
     } catch (error: any) {
       console.error("SignUp Error:", error);
@@ -296,10 +300,20 @@ const App: React.FC = () => {
         password: 'teste',
       });
 
+      const isOnline = configSource !== 'mock';
+      
       if (adminRes.error && techRes.error) {
-         setAuthError('Usuários provavelmente já existem ou erro de conexão.');
+         if (isOnline) {
+             setAuthError('Usuários já existem ou precisam de confirmação por e-mail.');
+         } else {
+             setAuthError('Usuários provavelmente já existem.');
+         }
       } else {
-         alert('Usuários inicializados! Tente fazer login.\n\nAdmin: andre / edna13deh\nTécnico: teste / teste');
+         let msg = 'Usuários inicializados!\n\nAdmin: andre / edna13deh\nTécnico: teste / teste';
+         if (isOnline) {
+             msg += '\n\nIMPORTANTE (Online): Se o seu Supabase exige confirmação de e-mail, você não conseguirá logar até confirmar.';
+         }
+         alert(msg);
          setLoginUser('andre'); // Pre-fill
          setLoginPassword('edna13deh');
       }
@@ -555,10 +569,17 @@ const App: React.FC = () => {
 
   // Config Functions
   const handleSaveConfig = () => {
-    if (configUrl && configKey) {
-      localStorage.setItem('hw_supa_url', configUrl);
-      localStorage.setItem('hw_supa_key', configKey);
-      alert("Configuração salva! A página será recarregada.");
+    const url = configUrl.trim();
+    const key = configKey.trim();
+
+    if (url && key) {
+      if (!url.startsWith('http')) {
+        alert("A URL deve começar com https://");
+        return;
+      }
+      localStorage.setItem('hw_supa_url', url);
+      localStorage.setItem('hw_supa_key', key);
+      alert("Configuração salva! A página será recarregada para aplicar as mudanças.");
       window.location.reload();
     } else {
       alert("Por favor, preencha URL e Key.");
