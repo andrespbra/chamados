@@ -26,7 +26,9 @@ import {
   ShieldCheck,
   Hammer,
   Settings,
-  Database
+  Database,
+  Code2,
+  Copy
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
@@ -48,6 +50,7 @@ const App: React.FC = () => {
 
   // Config Modal State
   const [showConfig, setShowConfig] = useState(false);
+  const [showSql, setShowSql] = useState(false);
   const [configUrl, setConfigUrl] = useState(localStorage.getItem('hw_supa_url') || '');
   const [configKey, setConfigKey] = useState(localStorage.getItem('hw_supa_key') || '');
 
@@ -65,6 +68,7 @@ const App: React.FC = () => {
   const [summary, setSummary] = useState('');
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
   
   // Search & View State
   const [searchTerm, setSearchTerm] = useState('');
@@ -113,6 +117,7 @@ const App: React.FC = () => {
   // Carregar dados do Supabase ao iniciar
   const fetchRecords = useCallback(async () => {
     setIsLoading(true);
+    setDbError(null);
     try {
       const { data, error } = await supabase
         .from('support_records')
@@ -125,7 +130,15 @@ const App: React.FC = () => {
         setHistory(data as unknown as SupportRecord[]);
       }
     } catch (error: any) {
-      console.error('Erro ao buscar registros:', error.message || error);
+      console.error('Erro ao buscar registros:', error);
+      // Erro 42P01 significa tabela inexistente no Postgres
+      if (error.code === '42P01') {
+        setDbError('A tabela "support_records" não existe no seu Supabase. Vá em Configurações > Ver SQL e crie a tabela.');
+        setShowConfig(true); // Abre modal para ajudar
+        setShowSql(true);
+      } else {
+        setDbError(error.message || 'Erro de conexão com o banco.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -245,9 +258,9 @@ const App: React.FC = () => {
       if (error.message === 'Failed to fetch') {
          setAuthError('Erro de conexão. Verifique URL/Key e sua internet.');
       } else if (error.message.includes('Email not confirmed')) {
-         setAuthError('E-mail não confirmado. Verifique sua caixa de entrada.');
+         setAuthError('ATENÇÃO: E-mail não confirmado. Verifique sua caixa de entrada no provedor de e-mail (se real) ou desabilite "Confirm Email" no Supabase.');
       } else if (error.message.includes('Invalid login credentials')) {
-         setAuthError('Usuário ou senha incorretos.');
+         setAuthError('Usuário não encontrado ou senha incorreta. Se for o primeiro acesso Online, clique em "Cadastrar" ou "Inicializar Acessos".');
       } else {
          setAuthError(error.message || 'Falha na autenticação.');
       }
@@ -268,7 +281,7 @@ const App: React.FC = () => {
         password: loginPassword,
       });
       if (error) throw error;
-      setAuthError('Cadastro iniciado! Se o banco exigir confirmação, verifique seu e-mail.');
+      setAuthError('Cadastro iniciado! Importante: Se estiver Online, o Supabase envia um e-mail de confirmação. Você não conseguirá logar até confirmar.');
       setIsSignUp(false);
     } catch (error: any) {
       console.error("SignUp Error:", error);
@@ -304,14 +317,14 @@ const App: React.FC = () => {
       
       if (adminRes.error && techRes.error) {
          if (isOnline) {
-             setAuthError('Usuários já existem ou precisam de confirmação por e-mail.');
+             setAuthError('Usuários já existem ou erro de conexão.');
          } else {
              setAuthError('Usuários provavelmente já existem.');
          }
       } else {
          let msg = 'Usuários inicializados!\n\nAdmin: andre / edna13deh\nTécnico: teste / teste';
          if (isOnline) {
-             msg += '\n\nIMPORTANTE (Online): Se o seu Supabase exige confirmação de e-mail, você não conseguirá logar até confirmar.';
+             msg += '\n\nIMPORTANTE (Online): O Supabase exige e-mail real para confirmação. Como usamos e-mails fictícios (@sistema.local), você deve ir no painel do Supabase > Authentication > Users e confirmar manualmente ou desabilitar "Confirm Email" nas configurações de Auth.';
          }
          alert(msg);
          setLoginUser('andre'); // Pre-fill
@@ -332,6 +345,7 @@ const App: React.FC = () => {
     await supabase.auth.signOut().catch(console.error);
     setSession(null);
     setUserRole('user');
+    setDbError(null);
   };
 
   const handleCopy = async () => {
@@ -399,6 +413,10 @@ const App: React.FC = () => {
       console.error("Erro ao salvar:", err);
       if (err.message === 'Failed to fetch') {
         alert('Erro de conexão: Não foi possível salvar no banco de dados.');
+      } else if (err.code === '42P01') {
+        alert('Erro Crítico: A tabela "support_records" não existe no banco de dados. Vá em Configurações e copie o script SQL para criar a tabela.');
+        setShowConfig(true);
+        setShowSql(true);
       } else {
         alert(`Erro ao salvar: ${err.message || 'Verifique a conexão'}`);
       }
@@ -596,6 +614,47 @@ const App: React.FC = () => {
     }
   };
 
+  const TABLE_SQL = `
+-- Crie a tabela no SQL Editor do Supabase:
+create table support_records (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  "recordType" text,
+  "startTime" text,
+  "endTime" text,
+  subject text,
+  task text,
+  sr text,
+  "analystName" text,
+  "locationName" text,
+  "isEscalated" text,
+  "bankAnalystName" text,
+  "problemDescription" text,
+  "actionTaken" text,
+  "validCall" text,
+  "trainingProvided" text,
+  "usedAcfs" text,
+  "customerComplaint" text,
+  "isValidated" text,
+  "isActionPlanEffective" text,
+  "wasPartChanged" text,
+  "partChangedDescription" text,
+  "usedDiagValidation" text,
+  "usedTestCard" text,
+  "sicOptions" text[],
+  "customerName" text,
+  "customerBadge" text,
+  "escalationDate" text,
+  "technicianName" text,
+  status text,
+  "escalationValidation" text
+);
+
+-- Habilite RLS (Segurança) se necessário:
+alter table support_records enable row level security;
+create policy "Public Access" on support_records for all using (true);
+`.trim();
+
   // --------------------------------------------------------------------------
   // LOGIN SCREEN
   // --------------------------------------------------------------------------
@@ -606,48 +665,85 @@ const App: React.FC = () => {
         {/* Config Modal */}
         {showConfig && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
-                <div className="flex justify-between items-center mb-4">
+             <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 flex flex-col max-h-[90vh]">
+                <div className="flex justify-between items-center mb-4 shrink-0">
                    <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2">
                      <Database className="w-5 h-5 text-blue-600" />
                      Configurar Conexão (Online)
                    </h3>
-                   <button onClick={() => setShowConfig(false)}><X className="w-5 h-5 text-gray-500" /></button>
+                   <button onClick={() => { setShowConfig(false); setShowSql(false); }}><X className="w-5 h-5 text-gray-500" /></button>
                 </div>
-                <p className="text-sm text-gray-500 mb-4">
-                  Insira as credenciais do seu projeto Supabase para conectar ao banco de dados real. Deixe em branco para usar o modo offline (Mock).
-                </p>
-                <div className="space-y-4">
-                   <div>
-                     <label className="block text-xs font-bold text-gray-700 mb-1">SUPABASE URL</label>
-                     <input 
-                       type="text" 
-                       value={configUrl} 
-                       onChange={e => setConfigUrl(e.target.value)} 
-                       placeholder="https://xyz.supabase.co"
-                       className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                     />
-                   </div>
-                   <div>
-                     <label className="block text-xs font-bold text-gray-700 mb-1">SUPABASE ANON KEY</label>
-                     <input 
-                       type="password" 
-                       value={configKey} 
-                       onChange={e => setConfigKey(e.target.value)} 
-                       placeholder="eyJhbGciOiJIUzI1NiIsInR5..."
-                       className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                     />
-                   </div>
-                   <div className="flex gap-2 pt-2">
-                     <button onClick={handleSaveConfig} className="flex-1 bg-blue-600 text-white py-2 rounded font-medium hover:bg-blue-700 transition text-sm">
-                       Salvar e Recarregar
-                     </button>
-                     {configSource === 'local' && (
-                       <button onClick={handleClearConfig} className="px-3 bg-red-100 text-red-600 rounded hover:bg-red-200 transition" title="Remover Configuração">
-                         <Trash2 className="w-4 h-4" />
-                       </button>
-                     )}
-                   </div>
+
+                <div className="overflow-y-auto pr-2">
+                  {!showSql ? (
+                    <>
+                      <p className="text-sm text-gray-500 mb-4">
+                        Insira as credenciais do seu projeto Supabase para conectar ao banco de dados real. Deixe em branco para usar o modo offline (Mock).
+                      </p>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">SUPABASE URL</label>
+                          <input 
+                            type="text" 
+                            value={configUrl} 
+                            onChange={e => setConfigUrl(e.target.value)} 
+                            placeholder="https://xyz.supabase.co"
+                            className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">SUPABASE ANON KEY</label>
+                          <input 
+                            type="password" 
+                            value={configKey} 
+                            onChange={e => setConfigKey(e.target.value)} 
+                            placeholder="eyJhbGciOiJIUzI1NiIsInR5..."
+                            className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="bg-gray-900 rounded-lg p-4 mb-4">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-xs text-gray-400 uppercase font-bold">SQL Editor Script</span>
+                        <button 
+                          onClick={() => navigator.clipboard.writeText(TABLE_SQL)}
+                          className="text-xs text-blue-300 hover:text-white flex items-center gap-1"
+                        >
+                          <Copy className="w-3 h-3" /> Copiar
+                        </button>
+                      </div>
+                      <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap overflow-x-auto">
+                        {TABLE_SQL}
+                      </pre>
+                      <p className="text-xs text-gray-500 mt-2">
+                        Copie este código, vá no seu Painel Supabase &gt; SQL Editor &gt; Novo Query e execute.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 pt-4 border-t border-gray-100 flex flex-col gap-2 shrink-0">
+                   {!showSql ? (
+                      <div className="flex gap-2">
+                        <button onClick={handleSaveConfig} className="flex-1 bg-blue-600 text-white py-2 rounded font-medium hover:bg-blue-700 transition text-sm">
+                          Salvar e Recarregar
+                        </button>
+                        <button onClick={() => setShowSql(true)} className="px-3 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 transition text-sm flex items-center gap-1" title="Gerar Tabela">
+                          <Code2 className="w-4 h-4" /> SQL
+                        </button>
+                        {configSource === 'local' && (
+                          <button onClick={handleClearConfig} className="px-3 bg-red-100 text-red-600 rounded hover:bg-red-200 transition" title="Remover Configuração">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                   ) : (
+                      <button onClick={() => setShowSql(false)} className="w-full bg-gray-200 text-gray-800 py-2 rounded font-medium hover:bg-gray-300 transition text-sm">
+                        Voltar para Configuração
+                      </button>
+                   )}
                 </div>
              </div>
           </div>
@@ -706,6 +802,11 @@ const App: React.FC = () => {
                     placeholder="Ex: andre"
                   />
                 </div>
+                {!loginUser.includes('@') && loginUser.length > 0 && (
+                  <p className="text-xs text-gray-400 mt-1 ml-1">
+                    Login sem e-mail: Será convertido para <b>{loginUser}@sistema.local</b>
+                  </p>
+                )}
               </div>
 
               <div>
@@ -761,7 +862,7 @@ const App: React.FC = () => {
           </div>
           
           <div className="bg-gray-50 px-8 py-4 border-t border-gray-100 flex justify-center items-center text-xs text-gray-500">
-             <span>v1.0.4 - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
+             <span>v1.0.5 - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
           </div>
         </div>
       </div>
@@ -773,6 +874,24 @@ const App: React.FC = () => {
   // --------------------------------------------------------------------------
   return (
     <div className="min-h-screen pb-12 bg-gray-50 relative">
+      
+      {/* DB Error Alert */}
+      {dbError && (
+        <div className="bg-red-600 text-white px-4 py-3 text-sm font-medium text-center relative z-40 shadow-md">
+          <div className="max-w-7xl mx-auto flex items-center justify-center gap-2">
+            <AlertTriangle className="w-5 h-5" />
+            <span>{dbError}</span>
+            {dbError.includes('não existe') && (
+              <button 
+                onClick={() => { setShowConfig(true); setShowSql(true); }}
+                className="underline hover:text-blue-200 ml-2"
+              >
+                Corrigir Agora
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       
       {/* Detail View Modal */}
       {selectedRecord && (
