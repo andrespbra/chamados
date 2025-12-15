@@ -78,8 +78,10 @@ const App: React.FC = () => {
   // Helper to determine role based on email/username
   const determineRole = (email?: string): 'admin' | 'technician' | 'user' => {
     if (!email) return 'user';
+    if (email.startsWith('admin')) return 'admin';
+    if (email.startsWith('tecnico')) return 'technician';
+    // Fallback for previous system users or specific names if needed, but prioritizing the requested roles
     if (email.includes('andre')) return 'admin';
-    if (email.includes('teste')) return 'technician';
     return 'user';
   };
 
@@ -313,14 +315,14 @@ const App: React.FC = () => {
     try {
       // 1. Try Create Admin
       const adminRes = await supabase.auth.signUp({
-        email: 'andre@sistema.local',
-        password: 'edna13deh',
+        email: 'admin@sistema.local',
+        password: '123',
       });
       
       // 2. Try Create Tech
       const techRes = await supabase.auth.signUp({
-        email: 'teste@sistema.local',
-        password: 'teste',
+        email: 'tecnico@sistema.local',
+        password: '123',
       });
 
       const isOnline = configSource !== 'mock';
@@ -332,13 +334,13 @@ const App: React.FC = () => {
              setAuthError('Usuários provavelmente já existem.');
          }
       } else {
-         let msg = 'Usuários inicializados!\n\nAdmin: andre / edna13deh\nTécnico: teste / teste';
+         let msg = 'Usuários inicializados!\n\nAdmin: admin / 123\nTécnico: tecnico / 123';
          if (isOnline) {
              msg += '\n\nIMPORTANTE (Online): O Supabase exige e-mail real para confirmação. Como usamos e-mails fictícios (@sistema.local), você deve ir no painel do Supabase > Authentication > Users e confirmar manualmente ou desabilitar "Confirm Email" nas configurações de Auth.';
          }
          alert(msg);
-         setLoginUser('andre'); // Pre-fill
-         setLoginPassword('edna13deh');
+         setLoginUser('admin'); // Pre-fill
+         setLoginPassword('123');
       }
     } catch (error: any) {
        if (error.message === 'Failed to fetch') {
@@ -809,7 +811,7 @@ create policy "Public Access" on support_records for all using (true);
                     value={loginUser}
                     onChange={(e) => setLoginUser(e.target.value)}
                     className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                    placeholder="Ex: andre"
+                    placeholder="Ex: admin ou tecnico"
                   />
                 </div>
                 {!loginUser.includes('@') && loginUser.length > 0 && (
@@ -866,13 +868,13 @@ create policy "Public Access" on support_records for all using (true);
                  className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center justify-center gap-1 mt-2"
               >
                  <ShieldCheck className="w-3 h-3" />
-                 Inicializar Acessos Padrão (Andre/Teste)
+                 Inicializar Acessos Padrão (Admin/Tecnico)
               </button>
             </div>
           </div>
           
           <div className="bg-gray-50 px-8 py-4 border-t border-gray-100 flex justify-center items-center text-xs text-gray-500">
-             <span>v1.0.5 - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
+             <span>v1.1.0 - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
           </div>
         </div>
       </div>
@@ -1193,43 +1195,49 @@ create policy "Public Access" on support_records for all using (true);
             <ClipboardCheck className="w-4 h-4" />
             <span>ESCALADA / Validação</span>
           </button>
-          <button
-            onClick={() => setActiveTab('chamadoEscalado')}
-            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
-              activeTab === 'chamadoEscalado' 
-                ? 'bg-white text-orange-600 shadow-sm' 
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-            }`}
-          >
-            <AlertTriangle className="w-4 h-4" />
-            <span>Chamado / Escalado</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
-              activeTab === 'dashboard' 
-                ? 'bg-white text-indigo-600 shadow-sm' 
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-            }`}
-          >
-            <LayoutDashboard className="w-4 h-4" />
-            <span>Dashboard</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('registros')}
-            className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
-              activeTab === 'registros' 
-                ? 'bg-white text-teal-600 shadow-sm' 
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-            }`}
-          >
-            <FileClock className="w-4 h-4" />
-            <span>Registros</span>
-          </button>
+
+          {/* Admin Restricted Tabs */}
+          {userRole === 'admin' && (
+            <>
+              <button
+                onClick={() => setActiveTab('chamadoEscalado')}
+                className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
+                  activeTab === 'chamadoEscalado' 
+                    ? 'bg-white text-orange-600 shadow-sm' 
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                <AlertTriangle className="w-4 h-4" />
+                <span>Chamado / Escalado</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('dashboard')}
+                className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
+                  activeTab === 'dashboard' 
+                    ? 'bg-white text-indigo-600 shadow-sm' 
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                <span>Dashboard</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('registros')}
+                className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
+                  activeTab === 'registros' 
+                    ? 'bg-white text-teal-600 shadow-sm' 
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                <FileClock className="w-4 h-4" />
+                <span>Registros</span>
+              </button>
+            </>
+          )}
         </div>
 
-        {activeTab === 'registros' ? (
-          /* REGISTROS (ALL RECORDS) VIEW */
+        {activeTab === 'registros' && userRole === 'admin' ? (
+          /* REGISTROS (ALL RECORDS) VIEW - ADMIN ONLY */
           <div className="animate-in fade-in duration-300">
              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="px-6 py-5 border-b border-gray-200 bg-teal-50/50 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -1533,7 +1541,7 @@ create policy "Public Access" on support_records for all using (true);
                 )}
 
                 {/* TAB 3: CHAMADO / ESCALADO */}
-                {activeTab === 'chamadoEscalado' && (
+                {activeTab === 'chamadoEscalado' && userRole === 'admin' && (
                   <div className="space-y-6 animate-in fade-in duration-300">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <FormInput label="Nome do Analista (Você)" value={formData.analystName} onChange={(v) => setFormData({...formData, analystName: v})} placeholder="Seu nome" required />

@@ -22,8 +22,8 @@ export const configSource: 'env' | 'local' | 'mock' = (realUrl && realKey) ? (en
 // --- MOCK IMPLEMENTATION ---
 // Simula o backend para quando não houver credenciais
 const MOCK_USERS = [
-  { id: 'admin-id', email: 'andre@sistema.local', password: 'edna13deh' },
-  { id: 'tech-id', email: 'teste@sistema.local', password: 'teste' }
+  { id: 'admin-id', email: 'admin@sistema.local', password: '123' },
+  { id: 'tech-id', email: 'tecnico@sistema.local', password: '123' }
 ];
 
 let mockSession: Session | null = null;
