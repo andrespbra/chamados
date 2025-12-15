@@ -248,19 +248,29 @@ const App: React.FC = () => {
     
     try {
       const email = getEmailFromUser(loginUser);
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: email,
         password: loginPassword,
       });
+
       if (error) throw error;
+
+      // Verificar confirmação de e-mail explicitamente caso o Supabase permita login parcial
+      // ou para garantir feedback correto
+      if (!data.session) {
+         if (data.user && !data.user.email_confirmed_at) {
+            throw new Error('Email not confirmed');
+         }
+      }
+
     } catch (error: any) {
       console.error("Login Error:", error);
       if (error.message === 'Failed to fetch') {
          setAuthError('Erro de conexão. Verifique URL/Key e sua internet.');
-      } else if (error.message.includes('Email not confirmed')) {
-         setAuthError('ATENÇÃO: E-mail não confirmado. Verifique sua caixa de entrada no provedor de e-mail (se real) ou desabilite "Confirm Email" no Supabase.');
+      } else if (error.message.includes('Email not confirmed') || error.message === 'Email not confirmed') {
+         setAuthError('Acesso negado: Por favor, confirme seu e-mail para fazer login. Verifique sua caixa de entrada.');
       } else if (error.message.includes('Invalid login credentials')) {
-         setAuthError('Usuário não encontrado ou senha incorreta. Se for o primeiro acesso Online, clique em "Cadastrar" ou "Inicializar Acessos".');
+         setAuthError('Credenciais inválidas. Verifique se o usuário existe e a senha está correta.');
       } else {
          setAuthError(error.message || 'Falha na autenticação.');
       }
@@ -281,7 +291,7 @@ const App: React.FC = () => {
         password: loginPassword,
       });
       if (error) throw error;
-      setAuthError('Cadastro iniciado! Importante: Se estiver Online, o Supabase envia um e-mail de confirmação. Você não conseguirá logar até confirmar.');
+      setAuthError('Cadastro iniciado! Verifique seu e-mail para confirmar a conta antes de logar.');
       setIsSignUp(false);
     } catch (error: any) {
       console.error("SignUp Error:", error);
