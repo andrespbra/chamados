@@ -18,18 +18,12 @@ import {
   Eye,
   Download,
   FileSpreadsheet,
-  LogOut,
-  User,
-  LogIn,
-  Lock,
   ShieldAlert,
-  ShieldCheck,
   Hammer,
   Settings,
   Database,
   Code2,
   Copy,
-  Info,
   RefreshCw
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
@@ -42,13 +36,10 @@ import { getFormattedDateTime, formatDisplayDate } from './utils';
 import { supabase, isSupabaseConfigured, configSource } from './supabaseClient';
 
 const App: React.FC = () => {
-  // Auth State
-  const [session, setSession] = useState<Session | null>(null);
-  const [authLoading, setAuthLoading] = useState(false);
-  const [loginUser, setLoginUser] = useState(''); 
-  const [loginPassword, setLoginPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [authError, setAuthError] = useState('');
+  // Auth State - Defaulted to Admin for "No Login" mode
+  const [session, setSession] = useState<Session | null>({
+    user: { email: 'admin@sistema.local' }
+  } as unknown as Session);
 
   // Config Modal State
   const [showConfig, setShowConfig] = useState(false);
@@ -56,8 +47,8 @@ const App: React.FC = () => {
   const [configUrl, setConfigUrl] = useState(localStorage.getItem('hw_supa_url') || '');
   const [configKey, setConfigKey] = useState(localStorage.getItem('hw_supa_key') || '');
 
-  // Role State
-  const [userRole, setUserRole] = useState<'admin' | 'technician' | 'user'>('user');
+  // Role State - Default Admin
+  const [userRole, setUserRole] = useState<'admin' | 'technician' | 'user'>('admin');
 
   // App State
   const [activeTab, setActiveTab] = useState<'geral' | 'escala' | 'chamadoEscalado' | 'dashboard' | 'registros'>('geral');
@@ -77,36 +68,27 @@ const App: React.FC = () => {
   const [selectedRecord, setSelectedRecord] = useState<SupportRecord | null>(null);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
 
-  // Helper to determine role based on email/username
+  // Helper to determine role based on email/username (kept for compatibility logic)
   const determineRole = (email?: string): 'admin' | 'technician' | 'user' => {
     if (!email) return 'user';
     if (email.startsWith('admin')) return 'admin';
     if (email.startsWith('tecnico')) return 'technician';
-    // Fallback for previous system users or specific names if needed
-    if (email.includes('andre')) return 'admin';
-    return 'user';
+    return 'admin'; // Default fallback
   };
 
-  // Auth Effect
+  // Auth Effect - Try to connect but don't block UI
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUserRole(determineRole(session?.user?.email));
+    supabase.auth.getSession().then(({ data: { session: fetchedSession } }) => {
+      if (fetchedSession) {
+        setSession(fetchedSession);
+        setUserRole(determineRole(fetchedSession?.user?.email));
+      }
     }).catch(err => {
       console.error("Session check failed:", err);
     });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUserRole(determineRole(session?.user?.email));
-    });
-
-    return () => subscription.unsubscribe();
   }, []);
 
-  // Security Effect: Redirect Technician from restricted tabs
+  // Security Effect: Redirect Technician from restricted tabs (if role changes)
   useEffect(() => {
     if (userRole === 'technician' && ['chamadoEscalado', 'dashboard', 'registros'].includes(activeTab)) {
       setActiveTab('geral');
@@ -145,8 +127,7 @@ const App: React.FC = () => {
       // Erro 42P01 significa tabela inexistente no Postgres
       if (error.code === '42P01') {
         setDbError('A tabela "support_records" não existe no seu Supabase. Vá em Configurações > Ver SQL e crie a tabela.');
-        setShowConfig(true); // Abre modal para ajudar
-        setShowSql(true);
+        // setShowConfig(true); // Opcional: abrir config automaticamente
       } else {
         setDbError(error.message || 'Erro de conexão com o banco.');
       }
@@ -156,10 +137,8 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (session) {
-      fetchRecords();
-    }
-  }, [fetchRecords, session]);
+    fetchRecords();
+  }, [fetchRecords]);
 
   // Generate Summary Text
   const generateSummary = useCallback(() => {
@@ -245,129 +224,6 @@ const App: React.FC = () => {
   useEffect(() => {
     setSummary(generateSummary());
   }, [generateSummary]);
-
-  // Auth Functions helper
-  const getEmailFromUser = (userConfig: string) => {
-    // If it looks like an email, use it. Otherwise append domain.
-    return userConfig.includes('@') ? userConfig : `${userConfig}@sistema.local`;
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthLoading(true);
-    setAuthError('');
-    
-    try {
-      const email = getEmailFromUser(loginUser);
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email,
-        password: loginPassword,
-      });
-
-      if (error) throw error;
-
-      // Verificar confirmação de e-mail explicitamente caso o Supabase permita login parcial
-      // ou para garantir feedback correto
-      if (!data.session) {
-         if (data.user && !data.user.email_confirmed_at) {
-            throw new Error('Email not confirmed');
-         }
-      }
-
-    } catch (error: any) {
-      console.error("Login Error:", error);
-      if (error.message === 'Failed to fetch') {
-         setAuthError('Erro de conexão. Verifique URL/Key e sua internet.');
-      } else if (error.message.includes('Email not confirmed') || error.message === 'Email not confirmed') {
-         setAuthError('Acesso negado: Por favor, confirme seu e-mail para fazer login. Verifique sua caixa de entrada.');
-      } else if (error.message.includes('Invalid login credentials')) {
-         setAuthError('Credenciais inválidas. Verifique se o usuário existe e a senha está correta.');
-      } else {
-         setAuthError(error.message || 'Falha na autenticação.');
-      }
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthLoading(true);
-    setAuthError('');
-
-    try {
-      const email = getEmailFromUser(loginUser);
-      const { error } = await supabase.auth.signUp({
-        email: email,
-        password: loginPassword,
-      });
-      if (error) throw error;
-      setAuthError('Cadastro iniciado! Verifique seu e-mail para confirmar a conta antes de logar.');
-      setIsSignUp(false);
-    } catch (error: any) {
-      console.error("SignUp Error:", error);
-      if (error.message === 'Failed to fetch') {
-         setAuthError('Erro de conexão com o servidor.');
-      } else {
-         setAuthError(error.message || 'Erro ao cadastrar');
-      }
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  // SEED DEFAULT USERS (ADMIN & TECH)
-  const handleSeedUsers = async () => {
-    setAuthLoading(true);
-    setAuthError('');
-
-    try {
-      // 1. Try Create Admin
-      const adminRes = await supabase.auth.signUp({
-        email: 'admin@sistema.local',
-        password: '123',
-      });
-      
-      // 2. Try Create Tech
-      const techRes = await supabase.auth.signUp({
-        email: 'tecnico@sistema.local',
-        password: '123',
-      });
-
-      const isOnline = configSource !== 'mock';
-      
-      if (adminRes.error && techRes.error) {
-         if (isOnline) {
-             setAuthError('Usuários já existem ou erro de conexão.');
-         } else {
-             setAuthError('Usuários provavelmente já existem.');
-         }
-      } else {
-         let msg = 'Usuários inicializados!\n\nAdmin: admin / 123\nTécnico: tecnico / 123';
-         if (isOnline) {
-             msg += '\n\nIMPORTANTE (Online): O Supabase exige e-mail real para confirmação. Como usamos e-mails fictícios (@sistema.local), você deve ir no painel do Supabase > Authentication > Users e confirmar manualmente ou desabilitar "Confirm Email" nas configurações de Auth.';
-         }
-         alert(msg);
-         setLoginUser('admin'); // Pre-fill
-         setLoginPassword('123');
-      }
-    } catch (error: any) {
-       if (error.message === 'Failed to fetch') {
-         setAuthError('Erro de conexão ao tentar criar usuários.');
-       } else {
-         setAuthError('Erro na inicialização: ' + error.message);
-       }
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut().catch(console.error);
-    setSession(null);
-    setUserRole('user');
-    setDbError(null);
-  };
 
   const handleCleanCache = () => {
     if(window.confirm('Isso limpará as configurações locais e recarregará a página. Continuar?')) {
@@ -465,25 +321,6 @@ const App: React.FC = () => {
 
   const setEndNow = () => {
     setFormData(prev => ({ ...prev, endTime: getFormattedDateTime() }));
-  };
-
-  const updateRecord = async (id: string, field: keyof SupportRecord, value: any) => {
-    // Otimistic Update
-    const originalHistory = [...history];
-    setHistory(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
-
-    try {
-      const { error } = await supabase
-        .from('support_records')
-        .update({ [field]: value })
-        .eq('id', id);
-
-      if (error) throw error;
-    } catch (err) {
-      console.error("Erro ao atualizar:", err);
-      alert("Erro ao atualizar o registro.");
-      setHistory(originalHistory); // Reverte em caso de erro
-    }
   };
 
   const handleDeleteRecord = async (id: string) => {
@@ -684,13 +521,30 @@ create policy "Public Access" on support_records for all using (true);
 `.trim();
 
   // --------------------------------------------------------------------------
-  // LOGIN SCREEN
+  // MAIN APP RENDER
   // --------------------------------------------------------------------------
-  if (!session) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 relative">
-        
-        {/* Config Modal */}
+  return (
+    <div className="min-h-screen pb-12 bg-gray-50 relative">
+      
+      {/* DB Error Alert */}
+      {dbError && (
+        <div className="bg-red-600 text-white px-4 py-3 text-sm font-medium text-center relative z-40 shadow-md">
+          <div className="max-w-7xl mx-auto flex items-center justify-center gap-2">
+            <AlertTriangle className="w-5 h-5" />
+            <span>{dbError}</span>
+            {dbError.includes('não existe') && (
+              <button 
+                onClick={() => { setShowConfig(true); setShowSql(true); }}
+                className="underline hover:text-blue-200 ml-2"
+              >
+                Corrigir Agora
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Config Modal */}
         {showConfig && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
              <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 flex flex-col max-h-[90vh]">
@@ -776,181 +630,6 @@ create policy "Public Access" on support_records for all using (true);
              </div>
           </div>
         )}
-
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-300 relative">
-          {/* Config Button */}
-          <button 
-            onClick={() => setShowConfig(true)} 
-            className="absolute top-4 right-4 p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition z-20"
-            title="Configurar Conexão"
-          >
-            <Settings className="w-5 h-5" />
-          </button>
-
-          <div className={`${userRole === 'admin' ? 'bg-red-600' : 'bg-blue-600'} p-8 text-center relative overflow-hidden transition-colors duration-500`}>
-            <div className="absolute top-0 left-0 w-full h-full opacity-10">
-               <ServerCrash className="w-64 h-64 -translate-y-12 -translate-x-12 rotate-12" />
-            </div>
-            <div className="relative z-10 flex flex-col items-center">
-              <div className="bg-white p-3 rounded-xl shadow-lg mb-4">
-                <ServerCrash className={`w-10 h-10 ${userRole === 'admin' ? 'text-red-600' : 'text-blue-600'}`} />
-              </div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">
-                Support<span className="text-blue-200">Log</span> URA
-              </h1>
-              <p className="text-blue-100 text-sm mt-1">Sistema de Registro de Atendimento</p>
-            </div>
-          </div>
-
-          <div className="p-8">
-            <h2 className="text-xl font-bold text-gray-800 mb-6 text-center">
-              {isSignUp ? 'Criar Nova Conta' : 'Acesse sua conta'}
-            </h2>
-
-            {authError && (
-              <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-start gap-2 border border-red-100">
-                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                <span>{authError}</span>
-              </div>
-            )}
-
-            <form onSubmit={isSignUp ? handleSignUp : handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1 ml-1">Usuário</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <User className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    value={loginUser}
-                    onChange={(e) => setLoginUser(e.target.value)}
-                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                    placeholder="Ex: admin ou tecnico"
-                  />
-                </div>
-                {!loginUser.includes('@') && loginUser.length > 0 && (
-                  <p className="text-xs text-gray-400 mt-1 ml-1">
-                    Login sem e-mail: Será convertido para <b>{loginUser}@sistema.local</b>
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1 ml-1">Senha</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Lock className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="password"
-                    required
-                    minLength={3}
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                    placeholder="••••••••"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={authLoading}
-                className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                {authLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (isSignUp ? <User className="w-5 h-5" /> : <LogIn className="w-5 h-5" />)}
-                {isSignUp ? 'Cadastrar' : 'Entrar'}
-              </button>
-            </form>
-
-            <div className="mt-6 flex flex-col gap-4 text-center">
-              
-              {/* Access Hints */}
-              {!isSignUp && (
-                <div className="bg-blue-50 rounded-lg p-3 text-left border border-blue-100">
-                  <h4 className="text-xs font-bold text-blue-800 flex items-center gap-1 mb-2">
-                    <Info className="w-3 h-3" /> Acessos Padrão (Senha: 123)
-                  </h4>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                     <div className="bg-white p-2 rounded border border-blue-100 cursor-pointer hover:bg-blue-50 transition" onClick={() => { setLoginUser('admin'); setLoginPassword('123'); }}>
-                        <span className="block font-bold text-gray-800">Admin</span>
-                        <span className="text-gray-500">Acesso Total</span>
-                     </div>
-                     <div className="bg-white p-2 rounded border border-blue-100 cursor-pointer hover:bg-blue-50 transition" onClick={() => { setLoginUser('tecnico'); setLoginPassword('123'); }}>
-                        <span className="block font-bold text-gray-800">Técnico</span>
-                        <span className="text-gray-500">Restrito</span>
-                     </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="text-sm text-gray-600 flex justify-center gap-1 mt-2">
-                 {isSignUp ? 'Já tem uma conta?' : 'Não tem uma conta?'}
-                <button 
-                  onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }}
-                  className="font-semibold text-blue-600 hover:text-blue-500"
-                >
-                  {isSignUp ? 'Faça Login' : 'Cadastre-se'}
-                </button>
-              </div>
-
-              {/* Seed Button for Default Users */}
-              <div className="flex flex-col gap-2 mt-4">
-                 <button
-                    type="button"
-                    onClick={handleSeedUsers}
-                    disabled={authLoading}
-                    className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center justify-center gap-1"
-                 >
-                    <ShieldCheck className="w-3 h-3" />
-                    Inicializar Acessos Padrão (Admin/Tecnico)
-                 </button>
-                 
-                 <button
-                    type="button"
-                    onClick={handleCleanCache}
-                    className="text-xs text-gray-400 hover:text-red-600 transition flex items-center justify-center gap-1"
-                 >
-                    <RefreshCw className="w-3 h-3" />
-                    Limpar Dados Locais (Cache)
-                 </button>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-gray-50 px-8 py-4 border-t border-gray-100 flex justify-center items-center text-xs text-gray-500">
-             <span>v1.3.0 (Fixed) - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // --------------------------------------------------------------------------
-  // MAIN APP RENDER
-  // --------------------------------------------------------------------------
-  return (
-    <div className="min-h-screen pb-12 bg-gray-50 relative">
-      
-      {/* DB Error Alert */}
-      {dbError && (
-        <div className="bg-red-600 text-white px-4 py-3 text-sm font-medium text-center relative z-40 shadow-md">
-          <div className="max-w-7xl mx-auto flex items-center justify-center gap-2">
-            <AlertTriangle className="w-5 h-5" />
-            <span>{dbError}</span>
-            {dbError.includes('não existe') && (
-              <button 
-                onClick={() => { setShowConfig(true); setShowSql(true); }}
-                className="underline hover:text-blue-200 ml-2"
-              >
-                Corrigir Agora
-              </button>
-            )}
-          </div>
-        </div>
-      )}
       
       {/* Detail View Modal */}
       {selectedRecord && (
@@ -1205,12 +884,22 @@ create policy "Public Access" on support_records for all using (true);
              
              <div className="h-6 w-px bg-gray-200 mx-1"></div>
 
+             {/* Config Button (Moved from Login) */}
              <button 
-              onClick={handleLogout}
-              className="p-2 text-red-400 hover:text-red-700 hover:bg-red-50 rounded-full transition-colors"
-              title="Sair"
+              onClick={() => setShowConfig(true)}
+              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-full transition-colors"
+              title="Configurar Banco de Dados"
              >
-               <LogOut className="w-5 h-5" />
+               <Settings className="w-5 h-5" />
+             </button>
+             
+             {/* Reset Cache Button */}
+             <button 
+              onClick={handleCleanCache}
+              className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+              title="Limpar Cache"
+             >
+               <RefreshCw className="w-5 h-5" />
              </button>
           </div>
         </div>
