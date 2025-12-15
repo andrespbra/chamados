@@ -24,7 +24,9 @@ import {
   Database,
   Code2,
   Copy,
-  RefreshCw
+  RefreshCw,
+  Activity,
+  AlertCircle
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
@@ -242,6 +244,30 @@ const App: React.FC = () => {
     }
   };
 
+  const updateRecord = async (id: string, field: keyof SupportRecord, value: any) => {
+    // Otimistic Update
+    const originalHistory = [...history];
+    setHistory(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+
+    try {
+      const { error } = await supabase
+        .from('support_records')
+        .update({ [field]: value })
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (err) {
+      console.error("Erro ao atualizar:", err);
+      alert("Erro ao atualizar o registro.");
+      setHistory(originalHistory); // Reverte em caso de erro
+    }
+  };
+
+  const handleToggleStatus = async (id: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'Aberto' ? 'Fechado' : 'Aberto';
+    await updateRecord(id, 'status', newStatus);
+  };
+
   const handleRegister = async () => {
     if (!formData.analystName) {
       alert("Por favor, preencha o Nome do Analista.");
@@ -435,8 +461,17 @@ const App: React.FC = () => {
     setIsExportMenuOpen(false);
   };
 
-  // Filter history for dashboard
-  const dashboardData = history.filter(item => item.recordType === 'ESCALATION');
+  // Filter history for dashboard: Include explicit ESCALATION records OR GENERAL records with isEscalated 'Sim'
+  const dashboardData = history.filter(item => 
+    item.recordType === 'ESCALATION' || 
+    (item.recordType === 'GENERAL' && item.isEscalated === 'Sim')
+  );
+
+  const stats = {
+    total: dashboardData.length,
+    open: dashboardData.filter(i => i.status === 'Aberto').length,
+    closed: dashboardData.filter(i => i.status === 'Fechado').length
+  };
 
   // Filter for records view
   const filteredRecords = history.filter(item => {
@@ -1121,6 +1156,120 @@ create policy "Public Access" on support_records for all using (true);
                 )}
              </div>
           </div>
+        ) : activeTab === 'dashboard' && userRole === 'admin' ? (
+           /* DASHBOARD VIEW */
+           <div className="space-y-6 animate-in fade-in duration-300">
+              <div className="flex items-center justify-between">
+                 <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                    <LayoutDashboard className="w-6 h-6 text-indigo-600" />
+                    Painel de Escaladas
+                 </h2>
+                 <span className="text-sm text-gray-500">
+                    Visão geral dos chamados escalados (internos ou diretos)
+                 </span>
+              </div>
+
+              {/* KPI Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                 <div className="bg-white p-6 rounded-xl shadow-sm border border-indigo-100 flex items-center justify-between">
+                    <div>
+                       <p className="text-sm font-medium text-gray-500 uppercase">Total Escalados</p>
+                       <p className="text-3xl font-bold text-indigo-600 mt-1">{stats.total}</p>
+                    </div>
+                    <div className="p-3 bg-indigo-50 rounded-full">
+                       <Activity className="w-6 h-6 text-indigo-600" />
+                    </div>
+                 </div>
+
+                 <div className="bg-white p-6 rounded-xl shadow-sm border border-red-100 flex items-center justify-between">
+                    <div>
+                       <p className="text-sm font-medium text-gray-500 uppercase">Pendentes (Abertos)</p>
+                       <p className="text-3xl font-bold text-red-600 mt-1">{stats.open}</p>
+                    </div>
+                    <div className="p-3 bg-red-50 rounded-full">
+                       <AlertCircle className="w-6 h-6 text-red-600" />
+                    </div>
+                 </div>
+
+                 <div className="bg-white p-6 rounded-xl shadow-sm border border-green-100 flex items-center justify-between">
+                    <div>
+                       <p className="text-sm font-medium text-gray-500 uppercase">Concluídos (Fechados)</p>
+                       <p className="text-3xl font-bold text-green-600 mt-1">{stats.closed}</p>
+                    </div>
+                    <div className="p-3 bg-green-50 rounded-full">
+                       <CheckCircle2 className="w-6 h-6 text-green-600" />
+                    </div>
+                 </div>
+              </div>
+
+              {/* Escalation Table */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                 <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                    <h3 className="text-sm font-bold text-gray-700 uppercase">Lista de Chamados Escalados</h3>
+                 </div>
+                 {dashboardData.length === 0 ? (
+                    <div className="p-8 text-center text-gray-500">Nenhum chamado escalado encontrado.</div>
+                 ) : (
+                    <div className="overflow-x-auto">
+                       <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                             <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task / Chamado</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Origem</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Responsável</th>
+                                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                             </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                             {dashboardData.map((record) => (
+                                <tr key={record.id} className="hover:bg-gray-50 transition-colors">
+                                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                      {formatDisplayDate(record.recordType === 'ESCALATION' ? record.escalationDate : record.startTime)}
+                                   </td>
+                                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                      {record.task}
+                                   </td>
+                                   <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                      {record.recordType === 'ESCALATION' ? (
+                                         <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full font-bold">Direto</span>
+                                      ) : (
+                                         <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full font-bold">Geral (Escalado)</span>
+                                      )}
+                                   </td>
+                                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                      {record.recordType === 'ESCALATION' ? record.technicianName : record.bankAnalystName}
+                                   </td>
+                                   <td className="px-6 py-4 whitespace-nowrap text-center">
+                                      <button 
+                                         onClick={() => handleToggleStatus(record.id, record.status)}
+                                         className={`px-3 py-1 rounded-full text-xs font-bold transition-all shadow-sm ${
+                                            record.status === 'Aberto' 
+                                            ? 'bg-red-100 text-red-700 hover:bg-red-200' 
+                                            : 'bg-green-100 text-green-700 hover:bg-green-200'
+                                         }`}
+                                         title="Clique para alterar status"
+                                      >
+                                         {record.status || 'Aberto'}
+                                      </button>
+                                   </td>
+                                   <td className="px-6 py-4 whitespace-nowrap text-center">
+                                      <button
+                                         onClick={() => setSelectedRecord(record)}
+                                         className="text-gray-400 hover:text-indigo-600 transition"
+                                      >
+                                         <Eye className="w-5 h-5" />
+                                      </button>
+                                   </td>
+                                </tr>
+                             ))}
+                          </tbody>
+                       </table>
+                    </div>
+                 )}
+              </div>
+           </div>
         ) : (
           /* STANDARD FORM VIEWS */
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
