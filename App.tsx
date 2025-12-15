@@ -24,7 +24,9 @@ import {
   Lock,
   ShieldAlert,
   ShieldCheck,
-  Hammer
+  Hammer,
+  Settings,
+  Database
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
@@ -33,7 +35,7 @@ import { FormSelect } from './components/FormSelect';
 import { FormTextArea } from './components/FormTextArea';
 import { RadioGroup } from './components/RadioGroup';
 import { getFormattedDateTime, formatDisplayDate } from './utils';
-import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { supabase, isSupabaseConfigured, configSource } from './supabaseClient';
 
 const App: React.FC = () => {
   // Auth State
@@ -43,6 +45,11 @@ const App: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState('');
+
+  // Config Modal State
+  const [showConfig, setShowConfig] = useState(false);
+  const [configUrl, setConfigUrl] = useState(localStorage.getItem('hw_supa_url') || '');
+  const [configKey, setConfigKey] = useState(localStorage.getItem('hw_supa_key') || '');
 
   // Role State
   const [userRole, setUserRole] = useState<'admin' | 'technician' | 'user'>('user');
@@ -74,23 +81,21 @@ const App: React.FC = () => {
 
   // Auth Effect
   useEffect(() => {
-    if (isSupabaseConfigured) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        setSession(session);
-        setUserRole(determineRole(session?.user?.email));
-      }).catch(err => {
-        console.error("Session check failed:", err);
-      });
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUserRole(determineRole(session?.user?.email));
+    }).catch(err => {
+      console.error("Session check failed:", err);
+    });
 
-      const {
-        data: { subscription },
-      } = supabase.auth.onAuthStateChange((_event, session) => {
-        setSession(session);
-        setUserRole(determineRole(session?.user?.email));
-      });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setUserRole(determineRole(session?.user?.email));
+    });
 
-      return () => subscription.unsubscribe();
-    }
+    return () => subscription.unsubscribe();
   }, []);
 
   // Toggle SIC options
@@ -107,8 +112,6 @@ const App: React.FC = () => {
 
   // Carregar dados do Supabase ao iniciar
   const fetchRecords = useCallback(async () => {
-    if (!isSupabaseConfigured) return; 
-
     setIsLoading(true);
     try {
       const { data, error } = await supabase
@@ -231,10 +234,6 @@ const App: React.FC = () => {
     setAuthError('');
     
     try {
-      if (!isSupabaseConfigured) {
-        throw new Error("Erro de conexão: Banco de dados não configurado.");
-      }
-
       const email = getEmailFromUser(loginUser);
       const { error } = await supabase.auth.signInWithPassword({
         email: email,
@@ -244,7 +243,7 @@ const App: React.FC = () => {
     } catch (error: any) {
       console.error("Login Error:", error);
       if (error.message === 'Failed to fetch') {
-         setAuthError('Erro de conexão com o servidor. Verifique sua internet.');
+         setAuthError('Erro de conexão com o servidor. Verifique sua internet ou configurações.');
       } else {
          setAuthError(error.message || 'Falha na autenticação. Verifique usuário e senha.');
       }
@@ -259,10 +258,6 @@ const App: React.FC = () => {
     setAuthError('');
 
     try {
-      if (!isSupabaseConfigured) {
-        throw new Error("Erro de conexão: Banco de dados não configurado.");
-      }
-
       const email = getEmailFromUser(loginUser);
       const { error } = await supabase.auth.signUp({
         email: email,
@@ -285,10 +280,6 @@ const App: React.FC = () => {
 
   // SEED DEFAULT USERS (ADMIN & TECH)
   const handleSeedUsers = async () => {
-    if (!isSupabaseConfigured) {
-      setAuthError("Banco de dados não configurado.");
-      return;
-    }
     setAuthLoading(true);
     setAuthError('');
 
@@ -324,9 +315,7 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    if (isSupabaseConfigured) {
-      await supabase.auth.signOut().catch(console.error);
-    }
+    await supabase.auth.signOut().catch(console.error);
     setSession(null);
     setUserRole('user');
   };
@@ -365,20 +354,15 @@ const App: React.FC = () => {
     try {
       let savedRecord: SupportRecord;
 
-      if (isSupabaseConfigured) {
-        // Inserir no Supabase (Online)
-        const { data, error } = await supabase
-          .from('support_records')
-          .insert([newRecordPayload])
-          .select();
+      // Inserir no Supabase (Online ou Mock)
+      const { data, error } = await supabase
+        .from('support_records')
+        .insert([newRecordPayload])
+        .select();
 
-        if (error) throw error;
-        
-        savedRecord = data ? (data[0] as unknown as SupportRecord) : { id: 'temp-' + Date.now(), ...newRecordPayload };
-      } else {
-        // Fallback apenas se a config for perdida
-        throw new Error("Banco de dados não configurado.");
-      }
+      if (error) throw error;
+      
+      savedRecord = data ? (data[0] as unknown as SupportRecord) : { id: 'temp-' + Date.now(), ...newRecordPayload };
 
       // Atualiza histórico localmente
       setHistory([savedRecord, ...history]);
@@ -424,8 +408,6 @@ const App: React.FC = () => {
   };
 
   const updateRecord = async (id: string, field: keyof SupportRecord, value: any) => {
-    if (!isSupabaseConfigured) return;
-
     // Otimistic Update
     const originalHistory = [...history];
     setHistory(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
@@ -462,14 +444,12 @@ const App: React.FC = () => {
     if (selectedRecord?.id === id) setSelectedRecord(null);
 
     try {
-      if (isSupabaseConfigured) {
-        const { error } = await supabase
-          .from('support_records')
-          .delete()
-          .eq('id', id);
+      const { error } = await supabase
+        .from('support_records')
+        .delete()
+        .eq('id', id);
 
-        if (error) throw error;
-      }
+      if (error) throw error;
     } catch (err: any) {
       console.error("Erro ao excluir:", err);
       alert(`Erro ao excluir do banco de dados: ${err.message}`);
@@ -573,13 +553,95 @@ const App: React.FC = () => {
     );
   });
 
+  // Config Functions
+  const handleSaveConfig = () => {
+    if (configUrl && configKey) {
+      localStorage.setItem('hw_supa_url', configUrl);
+      localStorage.setItem('hw_supa_key', configKey);
+      alert("Configuração salva! A página será recarregada.");
+      window.location.reload();
+    } else {
+      alert("Por favor, preencha URL e Key.");
+    }
+  };
+
+  const handleClearConfig = () => {
+    if (window.confirm("Isso removerá a conexão com o banco real e voltará para o modo Mock (Offline/Memória). Deseja continuar?")) {
+      localStorage.removeItem('hw_supa_url');
+      localStorage.removeItem('hw_supa_key');
+      setConfigUrl('');
+      setConfigKey('');
+      window.location.reload();
+    }
+  };
+
   // --------------------------------------------------------------------------
   // LOGIN SCREEN
   // --------------------------------------------------------------------------
   if (!session) {
     return (
       <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 relative">
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-300">
+        
+        {/* Config Modal */}
+        {showConfig && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+                <div className="flex justify-between items-center mb-4">
+                   <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2">
+                     <Database className="w-5 h-5 text-blue-600" />
+                     Configurar Conexão (Online)
+                   </h3>
+                   <button onClick={() => setShowConfig(false)}><X className="w-5 h-5 text-gray-500" /></button>
+                </div>
+                <p className="text-sm text-gray-500 mb-4">
+                  Insira as credenciais do seu projeto Supabase para conectar ao banco de dados real. Deixe em branco para usar o modo offline (Mock).
+                </p>
+                <div className="space-y-4">
+                   <div>
+                     <label className="block text-xs font-bold text-gray-700 mb-1">SUPABASE URL</label>
+                     <input 
+                       type="text" 
+                       value={configUrl} 
+                       onChange={e => setConfigUrl(e.target.value)} 
+                       placeholder="https://xyz.supabase.co"
+                       className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                     />
+                   </div>
+                   <div>
+                     <label className="block text-xs font-bold text-gray-700 mb-1">SUPABASE ANON KEY</label>
+                     <input 
+                       type="password" 
+                       value={configKey} 
+                       onChange={e => setConfigKey(e.target.value)} 
+                       placeholder="eyJhbGciOiJIUzI1NiIsInR5..."
+                       className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                     />
+                   </div>
+                   <div className="flex gap-2 pt-2">
+                     <button onClick={handleSaveConfig} className="flex-1 bg-blue-600 text-white py-2 rounded font-medium hover:bg-blue-700 transition text-sm">
+                       Salvar e Recarregar
+                     </button>
+                     {configSource === 'local' && (
+                       <button onClick={handleClearConfig} className="px-3 bg-red-100 text-red-600 rounded hover:bg-red-200 transition" title="Remover Configuração">
+                         <Trash2 className="w-4 h-4" />
+                       </button>
+                     )}
+                   </div>
+                </div>
+             </div>
+          </div>
+        )}
+
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-300 relative">
+          {/* Config Button */}
+          <button 
+            onClick={() => setShowConfig(true)} 
+            className="absolute top-4 right-4 p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition z-20"
+            title="Configurar Conexão"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+
           <div className="bg-blue-600 p-8 text-center relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-full opacity-10">
                <ServerCrash className="w-64 h-64 -translate-y-12 -translate-x-12 rotate-12" />
@@ -678,7 +740,7 @@ const App: React.FC = () => {
           </div>
           
           <div className="bg-gray-50 px-8 py-4 border-t border-gray-100 flex justify-center items-center text-xs text-gray-500">
-             <span>v1.0.3 - Online</span>
+             <span>v1.0.4 - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
           </div>
         </div>
       </div>

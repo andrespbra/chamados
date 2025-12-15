@@ -14,11 +14,10 @@ const realUrl = envUrl || localUrl;
 const realKey = envKey || localKey;
 
 // Flag de configuração.
-// Para atender ao requisito de "Online o tempo todo", se não houver credenciais, usamos o Mock.
-// Portanto, consideramos sempre configurado.
+// Sempre true pois temos o Mock como fallback.
 export const isSupabaseConfigured = true;
 
-export const configSource: 'env' | 'local' | 'mock' = realUrl ? (envUrl ? 'env' : 'local') : 'mock';
+export const configSource: 'env' | 'local' | 'mock' = (realUrl && realKey) ? (envUrl ? 'env' : 'local') : 'mock';
 
 // --- MOCK IMPLEMENTATION ---
 // Simula o backend para quando não houver credenciais
@@ -77,8 +76,6 @@ const mockClient = {
         
         const existing = MOCK_USERS.find(u => u.email === email);
         if (existing) {
-             // Se já existe, retorna erro ou sucesso simulado. Para facilitar o "Seed", retornamos o user.
-             // Se a senha não bater, no mundo real falharia o login, mas aqui é cadastro.
              return { data: { user: { id: existing.id, email: existing.email } }, error: null };
         }
         const newUser = { id: Math.random().toString(), email, password };
@@ -149,11 +146,16 @@ const mockClient = {
 let supabaseInstance: any;
 
 if (realUrl && realKey) {
-  supabaseInstance = createClient(realUrl, realKey);
+  try {
+    supabaseInstance = createClient(realUrl, realKey);
+    console.log('Cliente Supabase Online Iniciado (URL/Key fornecidos).');
+  } catch (e) {
+    console.error('Erro ao iniciar Supabase real, usando Mock.', e);
+    supabaseInstance = mockClient;
+  }
 } else {
   console.log('Ambiente Supabase não configurado. Utilizando Mock Client em memória.');
   supabaseInstance = mockClient;
 }
 
 export const supabase = supabaseInstance;
-    
