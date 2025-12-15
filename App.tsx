@@ -28,7 +28,8 @@ import {
   Settings,
   Database,
   Code2,
-  Copy
+  Copy,
+  Info
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
@@ -80,7 +81,7 @@ const App: React.FC = () => {
     if (!email) return 'user';
     if (email.startsWith('admin')) return 'admin';
     if (email.startsWith('tecnico')) return 'technician';
-    // Fallback for previous system users or specific names if needed, but prioritizing the requested roles
+    // Fallback for previous system users or specific names if needed
     if (email.includes('andre')) return 'admin';
     return 'user';
   };
@@ -103,6 +104,13 @@ const App: React.FC = () => {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Security Effect: Redirect Technician from restricted tabs
+  useEffect(() => {
+    if (userRole === 'technician' && ['chamadoEscalado', 'dashboard', 'registros'].includes(activeTab)) {
+      setActiveTab('geral');
+    }
+  }, [userRole, activeTab]);
 
   // Toggle SIC options
   const toggleSicOption = (option: SicOption) => {
@@ -830,7 +838,7 @@ create policy "Public Access" on support_records for all using (true);
                   <input
                     type="password"
                     required
-                    minLength={4}
+                    minLength={3}
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
@@ -850,7 +858,27 @@ create policy "Public Access" on support_records for all using (true);
             </form>
 
             <div className="mt-6 flex flex-col gap-4 text-center">
-              <div className="text-sm text-gray-600 flex justify-center gap-1">
+              
+              {/* Access Hints */}
+              {!isSignUp && (
+                <div className="bg-blue-50 rounded-lg p-3 text-left border border-blue-100">
+                  <h4 className="text-xs font-bold text-blue-800 flex items-center gap-1 mb-2">
+                    <Info className="w-3 h-3" /> Acessos Padrão (Senha: 123)
+                  </h4>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                     <div className="bg-white p-2 rounded border border-blue-100 cursor-pointer hover:bg-blue-50 transition" onClick={() => { setLoginUser('admin'); setLoginPassword('123'); }}>
+                        <span className="block font-bold text-gray-800">Admin</span>
+                        <span className="text-gray-500">Acesso Total</span>
+                     </div>
+                     <div className="bg-white p-2 rounded border border-blue-100 cursor-pointer hover:bg-blue-50 transition" onClick={() => { setLoginUser('tecnico'); setLoginPassword('123'); }}>
+                        <span className="block font-bold text-gray-800">Técnico</span>
+                        <span className="text-gray-500">Restrito</span>
+                     </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="text-sm text-gray-600 flex justify-center gap-1 mt-2">
                  {isSignUp ? 'Já tem uma conta?' : 'Não tem uma conta?'}
                 <button 
                   onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }}
@@ -874,7 +902,7 @@ create policy "Public Access" on support_records for all using (true);
           </div>
           
           <div className="bg-gray-50 px-8 py-4 border-t border-gray-100 flex justify-center items-center text-xs text-gray-500">
-             <span>v1.1.0 - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
+             <span>v1.2.0 - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
           </div>
         </div>
       </div>
