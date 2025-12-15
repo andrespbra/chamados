@@ -6,35 +6,42 @@ import {
   Save, 
   CheckCircle2, 
   History, 
-  MonitorSmartphone,
   ServerCrash,
   FileText,
   ClipboardCheck,
   AlertTriangle,
   LayoutDashboard,
   Loader2,
-  WifiOff,
-  Settings,
   X,
-  Database,
-  Lock,
-  ShieldCheck,
   FileClock,
   Search,
   Eye,
   Download,
   FileSpreadsheet,
-  Filter
+  LogOut,
+  User,
+  LogIn,
+  Lock
 } from 'lucide-react';
+import { Session } from '@supabase/supabase-js';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
 import { FormInput } from './components/FormInput';
 import { FormSelect } from './components/FormSelect';
 import { FormTextArea } from './components/FormTextArea';
 import { RadioGroup } from './components/RadioGroup';
 import { getFormattedDateTime, formatDisplayDate } from './utils';
-import { supabase, isSupabaseConfigured, saveSupabaseConfig, clearSupabaseConfig, configSource } from './supabaseClient';
+import { supabase, isSupabaseConfigured } from './supabaseClient';
 
 const App: React.FC = () => {
+  // Auth State
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [loginUser, setLoginUser] = useState(''); // Changed from loginEmail
+  const [loginPassword, setLoginPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [authError, setAuthError] = useState('');
+
+  // App State
   const [activeTab, setActiveTab] = useState<'geral' | 'escala' | 'chamadoEscalado' | 'dashboard' | 'registros'>('geral');
   const [formData, setFormData] = useState<Omit<SupportRecord, 'id'>>({
     ...INITIAL_STATE,
@@ -51,10 +58,22 @@ const App: React.FC = () => {
   const [selectedRecord, setSelectedRecord] = useState<SupportRecord | null>(null);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
 
-  // Settings Modal State
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [configUrl, setConfigUrl] = useState('');
-  const [configKey, setConfigKey] = useState('');
+  // Auth Effect
+  useEffect(() => {
+    if (isSupabaseConfigured) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        setSession(session);
+      });
+
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
+        setSession(session);
+      });
+
+      return () => subscription.unsubscribe();
+    }
+  }, []);
 
   // Toggle SIC options
   const toggleSicOption = (option: SicOption) => {
@@ -70,7 +89,7 @@ const App: React.FC = () => {
 
   // Carregar dados do Supabase ao iniciar
   const fetchRecords = useCallback(async () => {
-    if (!isSupabaseConfigured) return; // Não tenta buscar se não houver credenciais
+    if (!isSupabaseConfigured) return; 
 
     setIsLoading(true);
     try {
@@ -92,8 +111,10 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    fetchRecords();
-  }, [fetchRecords]);
+    if (session) {
+      fetchRecords();
+    }
+  }, [fetchRecords, session]);
 
   // Generate Summary Text
   const generateSummary = useCallback(() => {
@@ -180,6 +201,57 @@ const App: React.FC = () => {
     setSummary(generateSummary());
   }, [generateSummary]);
 
+  // Auth Functions helper
+  const getEmailFromUser = (userConfig: string) => {
+    // If it looks like an email, use it. Otherwise append domain.
+    return userConfig.includes('@') ? userConfig : `${userConfig}@sistema.local`;
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError('');
+    
+    try {
+      const email = getEmailFromUser(loginUser);
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email,
+        password: loginPassword,
+      });
+      if (error) throw error;
+    } catch (error: any) {
+      setAuthError('Falha na autenticação. Verifique usuário e senha.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError('');
+
+    try {
+      const email = getEmailFromUser(loginUser);
+      const { error } = await supabase.auth.signUp({
+        email: email,
+        password: loginPassword,
+      });
+      if (error) throw error;
+      setAuthError('Cadastro realizado! Se necessário, verifique o e-mail cadastrado.');
+      setIsSignUp(false);
+    } catch (error: any) {
+      setAuthError(error.message || 'Erro ao cadastrar');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+  };
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(summary);
@@ -208,7 +280,7 @@ const App: React.FC = () => {
       recordType,
       endTime: formData.endTime || getFormattedDateTime(),
       status: 'Aberto' as const,
-      escalationValidation: 'Não' as const
+      escalationValidation: 'Não' as const,
     };
 
     try {
@@ -225,9 +297,8 @@ const App: React.FC = () => {
         
         savedRecord = data ? (data[0] as unknown as SupportRecord) : { id: 'temp-' + Date.now(), ...newRecordPayload };
       } else {
-        // Modo Offline
-        savedRecord = { id: 'local-' + Date.now(), ...newRecordPayload };
-        console.warn("Salvando localmente (Offline Mode)");
+        // Fallback apenas se a config for perdida
+        throw new Error("Banco de dados não configurado.");
       }
 
       // Atualiza histórico localmente
@@ -249,7 +320,7 @@ const App: React.FC = () => {
 
     } catch (err: any) {
       console.error("Erro ao salvar:", err);
-      alert(`Erro ao salvar: ${err.message || 'Verifique o console'}`);
+      alert(`Erro ao salvar: ${err.message || 'Verifique a conexão'}`);
     } finally {
       setIsLoading(false);
     }
@@ -313,7 +384,6 @@ const App: React.FC = () => {
     } catch (err: any) {
       console.error("Erro ao excluir:", err);
       alert(`Erro ao excluir do banco de dados: ${err.message}`);
-      // Em um app ideal, reverteríamos o estado local aqui se falhasse
       fetchRecords(); // Recarrega para garantir sincronia
     } finally {
       setIsLoading(false);
@@ -346,7 +416,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // Define columns based on context, or just dump everything useful
     const headers = [
       'Data/Hora',
       'Tipo',
@@ -361,7 +430,7 @@ const App: React.FC = () => {
     ];
 
     const csvRows = [
-      headers.join(';'), // CSV header
+      headers.join(';'),
       ...dataToExport.map(row => {
         const typeLabel = row.recordType === 'VALIDATION' ? (row.isValidated === 'Sim' ? 'VLDD' : 'NVLDD') : row.recordType;
         const subjectClean = row.subject ? row.subject.replace(/;/g, ',') : '';
@@ -378,11 +447,11 @@ const App: React.FC = () => {
           row.bankAnalystName || '-',
           row.technicianName || '-',
           (row.customerComplaint || '').replace(/;/g, ',').replace(/\n/g, ' ')
-        ].map(field => `"${field}"`).join(';'); // Quote fields to handle separators inside content
+        ].map(field => `"${field}"`).join(';');
       })
     ];
 
-    const csvContent = "\uFEFF" + csvRows.join('\n'); // Add BOM for Excel UTF-8 compatibility
+    const csvContent = "\uFEFF" + csvRows.join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -393,14 +462,6 @@ const App: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     setIsExportMenuOpen(false);
-  };
-
-  const handleSaveConfig = () => {
-    if (!configUrl || !configKey) {
-      alert("Preencha ambos os campos.");
-      return;
-    }
-    saveSupabaseConfig(configUrl, configKey);
   };
 
   // Filter history for dashboard
@@ -418,84 +479,113 @@ const App: React.FC = () => {
     );
   });
 
+  // --------------------------------------------------------------------------
+  // LOGIN SCREEN
+  // --------------------------------------------------------------------------
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 relative">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-300">
+          <div className="bg-blue-600 p-8 text-center relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-full opacity-10">
+               <ServerCrash className="w-64 h-64 -translate-y-12 -translate-x-12 rotate-12" />
+            </div>
+            <div className="relative z-10 flex flex-col items-center">
+              <div className="bg-white p-3 rounded-xl shadow-lg mb-4">
+                <ServerCrash className="w-10 h-10 text-blue-600" />
+              </div>
+              <h1 className="text-2xl font-bold text-white tracking-tight">
+                Support<span className="text-blue-200">Log</span> URA
+              </h1>
+              <p className="text-blue-100 text-sm mt-1">Sistema de Registro de Atendimento</p>
+            </div>
+          </div>
+
+          <div className="p-8">
+            <h2 className="text-xl font-bold text-gray-800 mb-6 text-center">
+              {isSignUp ? 'Criar Nova Conta' : 'Acesse sua conta'}
+            </h2>
+
+            {authError && (
+              <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-start gap-2 border border-red-100">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>{authError}</span>
+              </div>
+            )}
+
+            <form onSubmit={isSignUp ? handleSignUp : handleLogin} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1 ml-1">Usuário</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <User className="h-4 w-4 text-gray-400" />
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={loginUser}
+                    onChange={(e) => setLoginUser(e.target.value)}
+                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                    placeholder="Ex: joao.silva"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1 ml-1">Senha</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-4 w-4 text-gray-400" />
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                    placeholder="••••••••"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {authLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (isSignUp ? <User className="w-5 h-5" /> : <LogIn className="w-5 h-5" />)}
+                {isSignUp ? 'Cadastrar' : 'Entrar'}
+              </button>
+            </form>
+
+            <div className="mt-6 flex flex-col gap-4 text-center">
+              <p className="text-sm text-gray-600">
+                {isSignUp ? 'Já tem uma conta?' : 'Não tem uma conta?'}
+                <button 
+                  onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }}
+                  className="ml-1 font-semibold text-blue-600 hover:text-blue-500"
+                >
+                  {isSignUp ? 'Faça Login' : 'Cadastre-se'}
+                </button>
+              </p>
+            </div>
+          </div>
+          
+          <div className="bg-gray-50 px-8 py-4 border-t border-gray-100 flex justify-center items-center text-xs text-gray-500">
+             <span>v1.0.1 - Online</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // MAIN APP RENDER
+  // --------------------------------------------------------------------------
   return (
     <div className="min-h-screen pb-12 bg-gray-50 relative">
       
-      {/* Settings Modal */}
-      {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="bg-gray-800 text-white px-6 py-4 flex justify-between items-center">
-              <h3 className="font-semibold flex items-center gap-2">
-                <Database className="w-5 h-5" />
-                Configurar Banco de Dados
-              </h3>
-              <button onClick={() => setIsSettingsOpen(false)} className="text-gray-400 hover:text-white transition">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-4">
-              {configSource === 'env' ? (
-                <div className="text-center py-6">
-                  <ShieldCheck className="w-16 h-16 text-green-500 mx-auto mb-4" />
-                  <h4 className="text-lg font-bold text-gray-800 mb-2">Ambiente Seguro Ativo</h4>
-                  <p className="text-sm text-gray-600">
-                    O aplicativo está conectado via Variáveis de Ambiente do Servidor.
-                    Suas credenciais estão protegidas e você não precisa configurar nada aqui.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <p className="text-sm text-gray-600 mb-4">
-                    Para uso temporário ou testes. Para uso definitivo, configure as variáveis de ambiente no Vercel.
-                  </p>
-                  
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-700 uppercase">Project URL</label>
-                    <input 
-                      type="text" 
-                      value={configUrl}
-                      onChange={(e) => setConfigUrl(e.target.value)}
-                      placeholder="https://seu-projeto.supabase.co"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-700 uppercase">API Key (Anon/Public)</label>
-                    <input 
-                      type="password" 
-                      value={configKey}
-                      onChange={(e) => setConfigKey(e.target.value)}
-                      placeholder="eyJh..."
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                  </div>
-
-                  <div className="pt-4 flex gap-3">
-                    {isSupabaseConfigured && (
-                      <button 
-                        onClick={clearSupabaseConfig}
-                        className="flex-1 py-2 px-4 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium"
-                      >
-                        Desconectar
-                      </button>
-                    )}
-                    <button 
-                      onClick={handleSaveConfig}
-                      className="flex-1 py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md text-sm font-medium"
-                    >
-                      Salvar Localmente
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Detail View Modal */}
       {selectedRecord && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -715,41 +805,24 @@ const App: React.FC = () => {
           <div className="flex items-center space-x-2 text-sm text-gray-500">
              {isLoading && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
              
-             {!isSupabaseConfigured ? (
-                <div 
-                  className="flex items-center text-orange-500 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-200 cursor-pointer hover:bg-orange-100 transition"
-                  onClick={() => setIsSettingsOpen(true)}
-                  title="Clique para configurar"
-                >
-                  <WifiOff className="w-4 h-4 mr-1.5" />
-                  <span className="text-xs font-bold">Offline</span>
-                </div>
-             ) : configSource === 'env' ? (
-                <div 
-                  className="flex items-center text-blue-700 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-200 cursor-pointer hover:bg-blue-100 transition"
-                  onClick={() => setIsSettingsOpen(true)}
-                  title="Conectado via Servidor (Seguro)"
-                >
-                  <ShieldCheck className="w-4 h-4 mr-1.5" />
-                  <span className="text-xs font-bold">Ambiente Seguro</span>
-                </div>
-             ) : (
-                <div 
-                  className="flex items-center text-green-600 bg-green-50 px-3 py-1.5 rounded-full border border-green-200 cursor-pointer hover:bg-green-100 transition"
-                  onClick={() => setIsSettingsOpen(true)}
-                  title="Conectado via Browser"
-                >
-                  <Database className="w-4 h-4 mr-1.5" />
-                  <span className="text-xs font-bold">Online (Local)</span>
-                </div>
-             )}
-             
-             <button 
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors"
-              title="Configurações"
+             <div 
+               className="flex items-center text-green-600 bg-green-50 px-3 py-1.5 rounded-full border border-green-200 cursor-default"
+               title={`Logado como ${session?.user?.email}`}
              >
-               <Settings className="w-5 h-5" />
+               <div className="w-2 h-2 rounded-full bg-green-500 mr-2"></div>
+               <span className="text-xs font-bold hidden sm:inline">
+                 {session?.user?.email?.split('@')[0]}
+               </span>
+             </div>
+             
+             <div className="h-6 w-px bg-gray-200 mx-1"></div>
+
+             <button 
+              onClick={handleLogout}
+              className="p-2 text-red-400 hover:text-red-700 hover:bg-red-50 rounded-full transition-colors"
+              title="Sair"
+             >
+               <LogOut className="w-5 h-5" />
              </button>
           </div>
         </div>
@@ -1031,7 +1104,7 @@ const App: React.FC = () => {
                                   record.status === 'Aberto' 
                                     ? 'bg-green-100 text-green-800' 
                                     : 'bg-gray-100 text-gray-600'
-                                } ${!isSupabaseConfigured ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                } ${(!isSupabaseConfigured) ? 'opacity-50 cursor-not-allowed' : ''}`}
                               >
                                 <option value="Aberto">Aberto</option>
                                 <option value="Fechado">Fechado</option>
@@ -1046,7 +1119,7 @@ const App: React.FC = () => {
                                   record.escalationValidation === 'Sim' 
                                     ? 'bg-blue-100 text-blue-800' 
                                     : 'bg-red-100 text-red-800'
-                                } ${!isSupabaseConfigured ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                } ${(!isSupabaseConfigured) ? 'opacity-50 cursor-not-allowed' : ''}`}
                               >
                                 <option value="Sim">Sim</option>
                                 <option value="Não">Não</option>
@@ -1288,7 +1361,7 @@ const App: React.FC = () => {
                     <span>{isLoading ? 'Salvando...' : 'Registrar Atendimento'}</span>
                   </button>
                   <p className="text-xs text-center text-gray-400 mt-2">
-                    {isSupabaseConfigured 
+                    {(isSupabaseConfigured)
                       ? "* Salva no banco de dados e copia para a área de transferência." 
                       : "* Apenas copia para a área de transferência (Offline)."}
                   </p>
@@ -1305,7 +1378,7 @@ const App: React.FC = () => {
             <div className="flex items-center space-x-2 mb-4">
               <History className="w-5 h-5 text-gray-500" />
               <h2 className="text-lg font-bold text-gray-800">Histórico de Atendimentos</h2>
-              {!isSupabaseConfigured && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded">Sessão Local</span>}
+              {(!isSupabaseConfigured) && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded">Sessão Local</span>}
             </div>
             <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
