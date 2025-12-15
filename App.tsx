@@ -29,7 +29,8 @@ import {
   Database,
   Code2,
   Copy,
-  Info
+  Info,
+  RefreshCw
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
@@ -368,6 +369,13 @@ const App: React.FC = () => {
     setDbError(null);
   };
 
+  const handleCleanCache = () => {
+    if(window.confirm('Isso limpará as configurações locais e recarregará a página. Continuar?')) {
+      localStorage.clear();
+      window.location.reload();
+    }
+  };
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(summary);
@@ -635,8 +643,8 @@ const App: React.FC = () => {
   };
 
   const TABLE_SQL = `
--- Crie a tabela no SQL Editor do Supabase:
-create table support_records (
+-- Crie a tabela no SQL Editor do Supabase (Executar apenas se não existir):
+create table if not exists support_records (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   "recordType" text,
@@ -779,13 +787,13 @@ create policy "Public Access" on support_records for all using (true);
             <Settings className="w-5 h-5" />
           </button>
 
-          <div className="bg-blue-600 p-8 text-center relative overflow-hidden">
+          <div className={`${userRole === 'admin' ? 'bg-red-600' : 'bg-blue-600'} p-8 text-center relative overflow-hidden transition-colors duration-500`}>
             <div className="absolute top-0 left-0 w-full h-full opacity-10">
                <ServerCrash className="w-64 h-64 -translate-y-12 -translate-x-12 rotate-12" />
             </div>
             <div className="relative z-10 flex flex-col items-center">
               <div className="bg-white p-3 rounded-xl shadow-lg mb-4">
-                <ServerCrash className="w-10 h-10 text-blue-600" />
+                <ServerCrash className={`w-10 h-10 ${userRole === 'admin' ? 'text-red-600' : 'text-blue-600'}`} />
               </div>
               <h1 className="text-2xl font-bold text-white tracking-tight">
                 Support<span className="text-blue-200">Log</span> URA
@@ -889,20 +897,31 @@ create policy "Public Access" on support_records for all using (true);
               </div>
 
               {/* Seed Button for Default Users */}
-              <button
-                 type="button"
-                 onClick={handleSeedUsers}
-                 disabled={authLoading}
-                 className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center justify-center gap-1 mt-2"
-              >
-                 <ShieldCheck className="w-3 h-3" />
-                 Inicializar Acessos Padrão (Admin/Tecnico)
-              </button>
+              <div className="flex flex-col gap-2 mt-4">
+                 <button
+                    type="button"
+                    onClick={handleSeedUsers}
+                    disabled={authLoading}
+                    className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center justify-center gap-1"
+                 >
+                    <ShieldCheck className="w-3 h-3" />
+                    Inicializar Acessos Padrão (Admin/Tecnico)
+                 </button>
+                 
+                 <button
+                    type="button"
+                    onClick={handleCleanCache}
+                    className="text-xs text-gray-400 hover:text-red-600 transition flex items-center justify-center gap-1"
+                 >
+                    <RefreshCw className="w-3 h-3" />
+                    Limpar Dados Locais (Cache)
+                 </button>
+              </div>
             </div>
           </div>
           
           <div className="bg-gray-50 px-8 py-4 border-t border-gray-100 flex justify-center items-center text-xs text-gray-500">
-             <span>v1.2.0 - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
+             <span>v1.3.0 (Fixed) - {configSource === 'mock' ? 'Offline (Mock)' : 'Online (Conectado)'}</span>
           </div>
         </div>
       </div>
@@ -1150,11 +1169,11 @@ create policy "Public Access" on support_records for all using (true);
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="bg-blue-600 p-2 rounded-lg">
+            <div className={`${userRole === 'admin' ? 'bg-red-600' : 'bg-blue-600'} p-2 rounded-lg transition-colors duration-300`}>
               <ServerCrash className="w-6 h-6 text-white" />
             </div>
             <h1 className="text-xl font-bold text-gray-900 tracking-tight">
-              Support<span className="text-blue-600">Log</span> URA
+              Support<span className={`${userRole === 'admin' ? 'text-red-600' : 'text-blue-600'} transition-colors duration-300`}>Log</span> URA
             </h1>
           </div>
           <div className="flex items-center space-x-2 text-sm text-gray-500">
