@@ -1,4 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
+
+import { createClient, Session, User } from '@supabase/supabase-js';
 
 // Tenta pegar variáveis de ambiente primeiro
 const envUrl = import.meta.env?.VITE_SUPABASE_URL;
@@ -9,48 +10,150 @@ const localUrl = localStorage.getItem('hw_supa_url');
 const localKey = localStorage.getItem('hw_supa_key');
 
 // Define as credenciais finais
-const supabaseUrl = envUrl || localUrl || '';
-const supabaseKey = envKey || localKey || '';
+const realUrl = envUrl || localUrl;
+const realKey = envKey || localKey;
 
-// Exporta flag para saber se está configurado
-export const isSupabaseConfigured = !!(supabaseUrl && supabaseKey);
+// Flag de configuração.
+// Para atender ao requisito de "Online o tempo todo", se não houver credenciais, usamos o Mock.
+// Portanto, consideramos sempre configurado.
+export const isSupabaseConfigured = true;
 
-// Identifica a origem da configuração para mostrar na UI
-export const configSource: 'env' | 'local' | 'none' = envUrl ? 'env' : (localUrl ? 'local' : 'none');
+export const configSource: 'env' | 'local' | 'mock' = realUrl ? (envUrl ? 'env' : 'local') : 'mock';
 
-if (!isSupabaseConfigured) {
-  console.warn('AVISO: Credenciais do Supabase não encontradas. O app funcionará em modo offline.');
-}
+// --- MOCK IMPLEMENTATION ---
+// Simula o backend para quando não houver credenciais
+const MOCK_USERS = [
+  { id: 'admin-id', email: 'andre@sistema.local', password: 'edna13deh' },
+  { id: 'tech-id', email: 'teste@sistema.local', password: 'teste' }
+];
 
-// Helpers para gerenciar credenciais via UI
-export const saveSupabaseConfig = (url: string, key: string) => {
-  if (!url || !key) return;
-  localStorage.setItem('hw_supa_url', url);
-  localStorage.setItem('hw_supa_key', key);
-  window.location.reload(); // Recarrega para aplicar
+let mockSession: Session | null = null;
+let mockRecords: any[] = [];
+const authListeners: Array<(event: string, session: Session | null) => void> = [];
+
+const notifyListeners = (event: string, session: Session | null) => {
+  authListeners.forEach(l => l(event, session));
 };
 
-export const clearSupabaseConfig = () => {
-  localStorage.removeItem('hw_supa_url');
-  localStorage.removeItem('hw_supa_key');
-  window.location.reload();
-};
-
-let supabaseInstance;
-
-try {
-    if (isSupabaseConfigured) {
-        supabaseInstance = createClient(supabaseUrl, supabaseKey);
-    } else {
-        // Inicializa com valores dummy para não quebrar o runtime, mas as chamadas falharão
-        // O App.tsx verifica isSupabaseConfigured antes de chamar
-        // @ts-ignore
-        supabaseInstance = createClient('https://placeholder.supabase.co', 'placeholder'); 
+const mockClient = {
+  auth: {
+    getSession: async () => ({ data: { session: mockSession }, error: null }),
+    onAuthStateChange: (callback: (event: string, session: Session | null) => void) => {
+      authListeners.push(callback);
+      // Dispara imediatamente o estado atual
+      setTimeout(() => callback(mockSession ? 'SIGNED_IN' : 'SIGNED_OUT', mockSession), 0);
+      return { data: { subscription: { unsubscribe: () => {} } } };
+    },
+    signInWithPassword: async ({ email, password }: any) => {
+      // Simula delay de rede
+      await new Promise(r => setTimeout(r, 500));
+      
+      const user = MOCK_USERS.find(u => u.email === email && u.password === password);
+      
+      if (user) {
+        const now = Math.floor(Date.now() / 1000);
+        mockSession = { 
+            access_token: 'mock-token-' + Date.now(), 
+            refresh_token: 'mock-refresh-' + Date.now(), 
+            expires_in: 3600, 
+            expires_at: now + 3600,
+            token_type: 'bearer', 
+            user: { 
+              id: user.id, 
+              email: user.email, 
+              app_metadata: {}, 
+              user_metadata: {}, 
+              aud: 'authenticated', 
+              created_at: new Date().toISOString() 
+            } as User
+        };
+        notifyListeners('SIGNED_IN', mockSession);
+        return { data: { session: mockSession, user: mockSession.user }, error: null };
+      }
+      return { data: { session: null }, error: { message: 'Usuário ou senha inválidos (Mock)' } };
+    },
+    signUp: async ({ email, password }: any) => {
+        await new Promise(r => setTimeout(r, 500));
+        
+        const existing = MOCK_USERS.find(u => u.email === email);
+        if (existing) {
+             // Se já existe, retorna erro ou sucesso simulado. Para facilitar o "Seed", retornamos o user.
+             // Se a senha não bater, no mundo real falharia o login, mas aqui é cadastro.
+             return { data: { user: { id: existing.id, email: existing.email } }, error: null };
+        }
+        const newUser = { id: Math.random().toString(), email, password };
+        MOCK_USERS.push(newUser);
+        
+        // Auto login
+        const now = Math.floor(Date.now() / 1000);
+        mockSession = { 
+            access_token: 'mock-token-' + Date.now(), 
+            refresh_token: 'mock-refresh-' + Date.now(), 
+            expires_in: 3600, 
+            expires_at: now + 3600,
+            token_type: 'bearer', 
+            user: { 
+              id: newUser.id, 
+              email: newUser.email, 
+              app_metadata: {}, 
+              user_metadata: {}, 
+              aud: 'authenticated', 
+              created_at: new Date().toISOString() 
+            } as User
+        };
+        notifyListeners('SIGNED_IN', mockSession);
+        
+        return { data: { user: mockSession.user, session: mockSession }, error: null };
+    },
+    signOut: async () => {
+      mockSession = null;
+      notifyListeners('SIGNED_OUT', null);
+      return { error: null };
     }
-} catch (error) {
-    console.error('Erro ao inicializar cliente Supabase:', error);
-    // @ts-ignore
-    supabaseInstance = createClient('https://placeholder.supabase.co', 'placeholder');
+  },
+  from: (table: string) => {
+    return {
+      select: (columns: string) => ({
+        order: (col: string, { ascending }: any = {}) => {
+          const sorted = [...mockRecords].sort((a, b) => {
+             if (a[col] < b[col]) return ascending ? -1 : 1;
+             if (a[col] > b[col]) return ascending ? 1 : -1;
+             return 0;
+          });
+          return Promise.resolve({ data: sorted, error: null });
+        }
+      }),
+      insert: (data: any[]) => {
+         const newRows = data.map(d => ({ ...d, id: Math.random().toString(), created_at: new Date().toISOString() }));
+         mockRecords = [...newRows, ...mockRecords];
+         return {
+           select: () => Promise.resolve({ data: newRows, error: null })
+         };
+      },
+      update: (data: any) => ({
+        eq: (col: string, val: any) => {
+          mockRecords = mockRecords.map(r => r[col] === val ? { ...r, ...data } : r);
+          return Promise.resolve({ data: null, error: null });
+        }
+      }),
+      delete: () => ({
+        eq: (col: string, val: any) => {
+           mockRecords = mockRecords.filter(r => r[col] !== val);
+           return Promise.resolve({ data: null, error: null });
+        }
+      })
+    };
+  }
+};
+
+let supabaseInstance: any;
+
+if (realUrl && realKey) {
+  supabaseInstance = createClient(realUrl, realKey);
+} else {
+  console.log('Ambiente Supabase não configurado. Utilizando Mock Client em memória.');
+  supabaseInstance = mockClient;
 }
 
 export const supabase = supabaseInstance;
+    

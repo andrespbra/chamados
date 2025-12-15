@@ -21,7 +21,10 @@ import {
   LogOut,
   User,
   LogIn,
-  Lock
+  Lock,
+  ShieldAlert,
+  ShieldCheck,
+  Hammer
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { SupportRecord, INITIAL_STATE, SUBJECT_OPTIONS, SicOption } from './types';
@@ -36,10 +39,13 @@ const App: React.FC = () => {
   // Auth State
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
-  const [loginUser, setLoginUser] = useState(''); // Changed from loginEmail
+  const [loginUser, setLoginUser] = useState(''); 
   const [loginPassword, setLoginPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState('');
+
+  // Role State
+  const [userRole, setUserRole] = useState<'admin' | 'technician' | 'user'>('user');
 
   // App State
   const [activeTab, setActiveTab] = useState<'geral' | 'escala' | 'chamadoEscalado' | 'dashboard' | 'registros'>('geral');
@@ -58,17 +64,29 @@ const App: React.FC = () => {
   const [selectedRecord, setSelectedRecord] = useState<SupportRecord | null>(null);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
 
+  // Helper to determine role based on email/username
+  const determineRole = (email?: string): 'admin' | 'technician' | 'user' => {
+    if (!email) return 'user';
+    if (email.includes('andre')) return 'admin';
+    if (email.includes('teste')) return 'technician';
+    return 'user';
+  };
+
   // Auth Effect
   useEffect(() => {
     if (isSupabaseConfigured) {
       supabase.auth.getSession().then(({ data: { session } }) => {
         setSession(session);
+        setUserRole(determineRole(session?.user?.email));
+      }).catch(err => {
+        console.error("Session check failed:", err);
       });
 
       const {
         data: { subscription },
       } = supabase.auth.onAuthStateChange((_event, session) => {
         setSession(session);
+        setUserRole(determineRole(session?.user?.email));
       });
 
       return () => subscription.unsubscribe();
@@ -213,6 +231,10 @@ const App: React.FC = () => {
     setAuthError('');
     
     try {
+      if (!isSupabaseConfigured) {
+        throw new Error("Erro de conexão: Banco de dados não configurado.");
+      }
+
       const email = getEmailFromUser(loginUser);
       const { error } = await supabase.auth.signInWithPassword({
         email: email,
@@ -220,7 +242,12 @@ const App: React.FC = () => {
       });
       if (error) throw error;
     } catch (error: any) {
-      setAuthError('Falha na autenticação. Verifique usuário e senha.');
+      console.error("Login Error:", error);
+      if (error.message === 'Failed to fetch') {
+         setAuthError('Erro de conexão com o servidor. Verifique sua internet.');
+      } else {
+         setAuthError(error.message || 'Falha na autenticação. Verifique usuário e senha.');
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -232,6 +259,10 @@ const App: React.FC = () => {
     setAuthError('');
 
     try {
+      if (!isSupabaseConfigured) {
+        throw new Error("Erro de conexão: Banco de dados não configurado.");
+      }
+
       const email = getEmailFromUser(loginUser);
       const { error } = await supabase.auth.signUp({
         email: email,
@@ -241,15 +272,63 @@ const App: React.FC = () => {
       setAuthError('Cadastro realizado! Se necessário, verifique o e-mail cadastrado.');
       setIsSignUp(false);
     } catch (error: any) {
-      setAuthError(error.message || 'Erro ao cadastrar');
+      console.error("SignUp Error:", error);
+      if (error.message === 'Failed to fetch') {
+         setAuthError('Erro de conexão com o servidor.');
+      } else {
+         setAuthError(error.message || 'Erro ao cadastrar');
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // SEED DEFAULT USERS (ADMIN & TECH)
+  const handleSeedUsers = async () => {
+    if (!isSupabaseConfigured) {
+      setAuthError("Banco de dados não configurado.");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError('');
+
+    try {
+      // 1. Try Create Admin
+      const adminRes = await supabase.auth.signUp({
+        email: 'andre@sistema.local',
+        password: 'edna13deh',
+      });
+      
+      // 2. Try Create Tech
+      const techRes = await supabase.auth.signUp({
+        email: 'teste@sistema.local',
+        password: 'teste',
+      });
+
+      if (adminRes.error && techRes.error) {
+         setAuthError('Usuários provavelmente já existem ou erro de conexão.');
+      } else {
+         alert('Usuários inicializados! Tente fazer login.\n\nAdmin: andre / edna13deh\nTécnico: teste / teste');
+         setLoginUser('andre'); // Pre-fill
+         setLoginPassword('edna13deh');
+      }
+    } catch (error: any) {
+       if (error.message === 'Failed to fetch') {
+         setAuthError('Erro de conexão ao tentar criar usuários.');
+       } else {
+         setAuthError('Erro na inicialização: ' + error.message);
+       }
     } finally {
       setAuthLoading(false);
     }
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    if (isSupabaseConfigured) {
+      await supabase.auth.signOut().catch(console.error);
+    }
     setSession(null);
+    setUserRole('user');
   };
 
   const handleCopy = async () => {
@@ -320,7 +399,11 @@ const App: React.FC = () => {
 
     } catch (err: any) {
       console.error("Erro ao salvar:", err);
-      alert(`Erro ao salvar: ${err.message || 'Verifique a conexão'}`);
+      if (err.message === 'Failed to fetch') {
+        alert('Erro de conexão: Não foi possível salvar no banco de dados.');
+      } else {
+        alert(`Erro ao salvar: ${err.message || 'Verifique a conexão'}`);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -362,6 +445,12 @@ const App: React.FC = () => {
   };
 
   const handleDeleteRecord = async (id: string) => {
+    // Permission Check
+    if (userRole !== 'admin') {
+      alert("Permissão negada. Apenas Administradores podem excluir registros.");
+      return;
+    }
+
     if (!window.confirm("Tem certeza que deseja excluir este registro permanentemente?")) {
       return;
     }
@@ -391,6 +480,11 @@ const App: React.FC = () => {
   };
 
   const handleExportReport = (type: 'ALL' | 'VLDD' | 'NVLDD' | 'ESCALATION') => {
+    if (userRole !== 'admin') {
+      alert("Permissão negada. Apenas Administradores podem extrair relatórios.");
+      return;
+    }
+
     let dataToExport = history;
     let filename = 'relatorio_geral.csv';
 
@@ -526,7 +620,7 @@ const App: React.FC = () => {
                     value={loginUser}
                     onChange={(e) => setLoginUser(e.target.value)}
                     className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                    placeholder="Ex: joao.silva"
+                    placeholder="Ex: andre"
                   />
                 </div>
               </div>
@@ -540,7 +634,7 @@ const App: React.FC = () => {
                   <input
                     type="password"
                     required
-                    minLength={6}
+                    minLength={4}
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
@@ -560,20 +654,31 @@ const App: React.FC = () => {
             </form>
 
             <div className="mt-6 flex flex-col gap-4 text-center">
-              <p className="text-sm text-gray-600">
-                {isSignUp ? 'Já tem uma conta?' : 'Não tem uma conta?'}
+              <div className="text-sm text-gray-600 flex justify-center gap-1">
+                 {isSignUp ? 'Já tem uma conta?' : 'Não tem uma conta?'}
                 <button 
                   onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }}
-                  className="ml-1 font-semibold text-blue-600 hover:text-blue-500"
+                  className="font-semibold text-blue-600 hover:text-blue-500"
                 >
                   {isSignUp ? 'Faça Login' : 'Cadastre-se'}
                 </button>
-              </p>
+              </div>
+
+              {/* Seed Button for Default Users */}
+              <button
+                 type="button"
+                 onClick={handleSeedUsers}
+                 disabled={authLoading}
+                 className="text-xs text-gray-400 hover:text-blue-600 transition flex items-center justify-center gap-1 mt-2"
+              >
+                 <ShieldCheck className="w-3 h-3" />
+                 Inicializar Acessos Padrão (Andre/Teste)
+              </button>
             </div>
           </div>
           
           <div className="bg-gray-50 px-8 py-4 border-t border-gray-100 flex justify-center items-center text-xs text-gray-500">
-             <span>v1.0.1 - Online</span>
+             <span>v1.0.3 - Online</span>
           </div>
         </div>
       </div>
@@ -780,6 +885,14 @@ const App: React.FC = () => {
             </div>
 
             <div className="bg-gray-100 px-6 py-4 flex justify-end shrink-0">
+               {userRole === 'admin' && (
+                  <button 
+                     onClick={() => handleDeleteRecord(selectedRecord.id)}
+                     className="mr-auto px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm font-medium text-red-600 hover:bg-red-100 transition flex items-center gap-2"
+                  >
+                     <Trash2 className="w-4 h-4" /> Excluir
+                  </button>
+               )}
                <button 
                   onClick={() => setSelectedRecord(null)}
                   className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
@@ -805,6 +918,20 @@ const App: React.FC = () => {
           <div className="flex items-center space-x-2 text-sm text-gray-500">
              {isLoading && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
              
+             {/* Role Badge */}
+             {userRole === 'admin' && (
+                <div className="flex items-center bg-red-100 text-red-700 px-3 py-1.5 rounded-full border border-red-200" title="Perfil Administrador">
+                   <ShieldAlert className="w-4 h-4 mr-1" />
+                   <span className="text-xs font-bold">ADMIN</span>
+                </div>
+             )}
+             {userRole === 'technician' && (
+                <div className="flex items-center bg-gray-100 text-gray-700 px-3 py-1.5 rounded-full border border-gray-200" title="Perfil Técnico">
+                   <Hammer className="w-4 h-4 mr-1" />
+                   <span className="text-xs font-bold">TÉCNICO</span>
+                </div>
+             )}
+
              <div 
                className="flex items-center text-green-600 bg-green-50 px-3 py-1.5 rounded-full border border-green-200 cursor-default"
                title={`Logado como ${session?.user?.email}`}
@@ -914,33 +1041,35 @@ const App: React.FC = () => {
                         />
                      </div>
 
-                     {/* Export Button */}
-                     <div className="relative">
-                       <button
-                         onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
-                         className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-md shadow-sm hover:bg-teal-700 transition text-sm font-medium whitespace-nowrap"
-                       >
-                         <FileSpreadsheet className="w-4 h-4" />
-                         Relatórios
-                       </button>
+                     {/* Export Button - ADMIN ONLY */}
+                     {userRole === 'admin' && (
+                       <div className="relative">
+                         <button
+                           onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
+                           className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-md shadow-sm hover:bg-teal-700 transition text-sm font-medium whitespace-nowrap"
+                         >
+                           <FileSpreadsheet className="w-4 h-4" />
+                           Relatórios
+                         </button>
 
-                       {isExportMenuOpen && (
-                         <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-20 border border-gray-200 animate-in fade-in slide-in-from-top-2 duration-150">
-                            <button onClick={() => handleExportReport('ALL')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                              <Download className="w-3 h-3" /> Geral (Todos)
-                            </button>
-                            <button onClick={() => handleExportReport('ESCALATION')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                              <AlertTriangle className="w-3 h-3 text-orange-500" /> Apenas Escaladas
-                            </button>
-                            <button onClick={() => handleExportReport('VLDD')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                              <CheckCircle2 className="w-3 h-3 text-green-500" /> Validadas (VLDD)
-                            </button>
-                            <button onClick={() => handleExportReport('NVLDD')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                              <X className="w-3 h-3 text-red-500" /> Não Validadas (NVLDD)
-                            </button>
-                         </div>
-                       )}
-                     </div>
+                         {isExportMenuOpen && (
+                           <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-20 border border-gray-200 animate-in fade-in slide-in-from-top-2 duration-150">
+                              <button onClick={() => handleExportReport('ALL')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <Download className="w-3 h-3" /> Geral (Todos)
+                              </button>
+                              <button onClick={() => handleExportReport('ESCALATION')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <AlertTriangle className="w-3 h-3 text-orange-500" /> Apenas Escaladas
+                              </button>
+                              <button onClick={() => handleExportReport('VLDD')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <CheckCircle2 className="w-3 h-3 text-green-500" /> Validadas (VLDD)
+                              </button>
+                              <button onClick={() => handleExportReport('NVLDD')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <X className="w-3 h-3 text-red-500" /> Não Validadas (NVLDD)
+                              </button>
+                           </div>
+                         )}
+                       </div>
+                     )}
                    </div>
                 </div>
                 
@@ -1017,113 +1146,16 @@ const App: React.FC = () => {
                                   <Eye className="w-3 h-3" />
                                   <span className="hidden md:inline">Exibir</span>
                                 </button>
-                                <button
-                                  onClick={() => handleDeleteRecord(record.id)}
-                                  className="inline-flex items-center justify-center p-1.5 bg-red-50 border border-red-200 rounded-full text-red-600 hover:bg-red-100 transition shadow-sm"
-                                  title="Excluir Registro"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
+                                {userRole === 'admin' && (
+                                  <button
+                                    onClick={() => handleDeleteRecord(record.id)}
+                                    className="inline-flex items-center justify-center p-1.5 bg-red-50 border border-red-200 rounded-full text-red-600 hover:bg-red-100 transition shadow-sm"
+                                    title="Excluir Registro"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                )}
                               </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-             </div>
-          </div>
-        ) : activeTab === 'dashboard' ? (
-          /* DASHBOARD VIEW */
-          <div className="animate-in fade-in duration-300">
-             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="px-6 py-5 border-b border-gray-200 bg-indigo-50/50 flex justify-between items-center">
-                   <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-                     <LayoutDashboard className="w-5 h-5 text-indigo-600" />
-                     Dashboard de Escaladas
-                   </h2>
-                   <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
-                     Total: {dashboardData.length}
-                   </span>
-                </div>
-                
-                {dashboardData.length === 0 ? (
-                  <div className="p-12 text-center text-gray-500">
-                     {isLoading ? (
-                        <div className="flex flex-col items-center">
-                          <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-2" />
-                          <p>Carregando dados...</p>
-                        </div>
-                     ) : (
-                       <>
-                        <AlertTriangle className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-                        <p>Nenhum chamado escalado registrado ainda.</p>
-                        {!isSupabaseConfigured && <p className="text-xs text-orange-500 mt-2">(Modo Offline Ativo - Banco de dados indisponível)</p>}
-                       </>
-                     )}
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data Escalada</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Analista</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Técnico</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Local</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task / Chamado</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Validação</th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {dashboardData.map((record) => (
-                          <tr key={record.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {formatDisplayDate(record.escalationDate)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                              {record.analystName}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {record.technicianName || '-'}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {record.locationName}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              <span className="font-mono bg-gray-100 px-2 py-1 rounded">{record.task}</span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <select 
-                                value={record.status}
-                                onChange={(e) => updateRecord(record.id, 'status', e.target.value)}
-                                disabled={!isSupabaseConfigured}
-                                className={`text-xs font-bold px-2 py-1 rounded-full border-0 cursor-pointer focus:ring-2 focus:ring-offset-1 ${
-                                  record.status === 'Aberto' 
-                                    ? 'bg-green-100 text-green-800' 
-                                    : 'bg-gray-100 text-gray-600'
-                                } ${(!isSupabaseConfigured) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              >
-                                <option value="Aberto">Aberto</option>
-                                <option value="Fechado">Fechado</option>
-                              </select>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <select 
-                                value={record.escalationValidation}
-                                onChange={(e) => updateRecord(record.id, 'escalationValidation', e.target.value)}
-                                disabled={!isSupabaseConfigured}
-                                className={`text-xs font-bold px-2 py-1 rounded-full border-0 cursor-pointer focus:ring-2 focus:ring-offset-1 ${
-                                  record.escalationValidation === 'Sim' 
-                                    ? 'bg-blue-100 text-blue-800' 
-                                    : 'bg-red-100 text-red-800'
-                                } ${(!isSupabaseConfigured) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              >
-                                <option value="Sim">Sim</option>
-                                <option value="Não">Não</option>
-                              </select>
                             </td>
                           </tr>
                         ))}
